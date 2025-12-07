@@ -1,0 +1,284 @@
+CREATE OR REPLACE PROCEDURE NORTHI_LOADER.EP_BACKFILLDATA (XDATA_DATE IN DATE) AS
+v_table_name VARCHAR2(100);
+v_missing_count NUMBER := 0;
+v_error_msg VARCHAR2(4000);
+v_procedure_name VARCHAR2(100) := 'EP_BACKFILLDATA';
+v_start_time DATE := SYSDATE;
+v_total_errors NUMBER := 0;
+v_mail_subject VARCHAR2(200);
+v_mail_message CLOB;
+v_recipient VARCHAR2(200) := 'erdem.tarikci@ttgint.com,northi@ttgint.com'; -- Mail adresi buraya yazılacak
+v_min_missing_threshold NUMBER := 0; -- Minimum missing data eşiği
+
+-- Log yazma procedure'ü
+PROCEDURE write_log(p_state VARCHAR2, p_sqltext CLOB DEFAULT NULL) IS
+    PRAGMA AUTONOMOUS_TRANSACTION;
+BEGIN
+    INSERT INTO NORTHI_DATA.TEST_ERROR (
+    ADD_DATE,
+    PROCEDURE_NAME, 
+    SQLTEXT,
+    STATE
+    ) VALUES (
+    SYSDATE,
+    v_procedure_name || ' - ' || TO_CHAR(XDATA_DATE, 'YYYY-MM-DD HH24:MI:SS'),
+    p_sqltext,
+    p_state
+    );
+    COMMIT;
+    
+    -- Hata sayısını artır
+    IF p_state IN ('ERROR', 'FATAL_ERROR') THEN
+    v_total_errors := v_total_errors + 1;
+    END IF;
+    
+EXCEPTION
+    WHEN OTHERS THEN
+    NULL; -- Log yazma hatası ana işlemi durdurmasın
+END write_log;
+
+-- Mail gönderme procedure'ü
+PROCEDURE send_notification_mail IS
+    PRAGMA AUTONOMOUS_TRANSACTION;
+BEGIN
+    -- Mail konusu
+    v_mail_subject := 'CELLSTS_4G Backfill Process - ' || 
+    TO_CHAR(XDATA_DATE, 'YYYY-MM-DD HH24:MI:SS') || 
+    CASE 
+    WHEN v_total_errors > 0 THEN ' - ERRORS DETECTED'
+    WHEN v_missing_count > 0 AND v_missing_count >= v_min_missing_threshold THEN ' - MISSING CELLS PROCESSED'
+    WHEN v_missing_count > 0 AND v_missing_count < v_min_missing_threshold THEN ' - INSUFFICIENT MISSING DATA (SKIPPED)'
+    ELSE ' - SUCCESS'
+    END;
+    
+    -- Mail içeriği
+    v_mail_message := 'CELLSTS_4G Backfill Process Report' || CHR(10) || CHR(10) ||
+    'Process Date: ' || TO_CHAR(XDATA_DATE, 'YYYY-MM-DD HH24:MI:SS') || CHR(10) ||
+    'Start Time: ' || TO_CHAR(v_start_time, 'YYYY-MM-DD HH24:MI:SS') || CHR(10) ||
+    'End Time: ' || TO_CHAR(SYSDATE, 'YYYY-MM-DD HH24:MI:SS') || CHR(10) ||
+    'Duration: ' || ROUND((SYSDATE - v_start_time) * 24 * 60, 2) || ' minutes' || CHR(10) || CHR(10) ||
+    'Source Table: ' || NVL(v_table_name, 'NOT FOUND') || CHR(10) ||
+    'Missing Cells Found: ' || v_missing_count || CHR(10) ||
+    'Minimum Threshold: ' || v_min_missing_threshold || CHR(10) ||
+    'Processing Status: ' || 
+    CASE 
+    WHEN v_missing_count >= v_min_missing_threshold THEN 'PROCESSED'
+    WHEN v_missing_count > 0 THEN 'SKIPPED (Below Threshold)'
+    ELSE 'NO MISSING DATA'
+    END || CHR(10) ||
+    'Total Errors: ' || v_total_errors || CHR(10) || CHR(10);
+    
+    -- Hata varsa detayları ekle
+    IF v_total_errors > 0 THEN
+    v_mail_message := v_mail_message || 'ERROR DETAILS:' || CHR(10) ||
+    '====' || CHR(10);
+    
+    FOR err_rec IN (
+    SELECT ADD_DATE, STATE, SUBSTR(SQLTEXT, 1, 500) AS ERROR_MSG
+    FROM NORTHI_DATA.TEST_ERROR 
+    WHERE PROCEDURE_NAME LIKE v_procedure_name || '%' || TO_CHAR(XDATA_DATE, 'YYYY-MM-DD HH24:MI:SS') || '%'
+    AND STATE IN ('ERROR', 'FATAL_ERROR')
+    AND ADD_DATE >= v_start_time
+    ORDER BY ADD_DATE
+    ) LOOP
+    v_mail_message := v_mail_message || 
+    TO_CHAR(err_rec.ADD_DATE, 'HH24:MI:SS') || ' - ' || 
+    err_rec.STATE || ': ' || err_rec.ERROR_MSG || CHR(10);
+    END LOOP;
+    
+    v_mail_message := v_mail_message || CHR(10);
+    END IF;
+    
+    -- Missing cell detayları
+    IF v_missing_count > 0 THEN
+    v_mail_message := v_mail_message || 'MISSING CELLS DETAILS:' || CHR(10) ||
+    '====' || CHR(10) ||
+    'Total missing cells found: ' || v_missing_count || CHR(10);
+    
+    IF v_missing_count >= v_min_missing_threshold THEN
+    v_mail_message := v_mail_message || 'Status: PROCESSED (Above threshold)' || CHR(10) || CHR(10);
+    ELSE
+    v_mail_message := v_mail_message || 'Status: SKIPPED (Below threshold of ' || v_min_missing_threshold || ')' || CHR(10) || CHR(10);
+    END IF;
+    
+    -- Missing cell detaylarını ekle (sadece işlem yapıldıysa)
+    IF v_missing_count >= v_min_missing_threshold THEN
+    FOR cell_rec IN (
+    SELECT  main_region_name, COUNT(*) Cell_count
+    FROM NORTHI_DATA.ET_LIST_ENODEB_CELL
+    GROUP BY main_region_name
+    ORDER BY 2 DESC 
+    ) LOOP
+    v_mail_message := v_mail_message || 
+    'Main Region: ' || cell_rec.main_region_name || 
+    ', Cell_count: ' || cell_rec.Cell_count || CHR(10);
+    END LOOP;
+    END IF;
+    END IF;
+    
+    v_mail_message := v_mail_message || CHR(10) || 
+    'For detailed logs, check NORTHI_DATA.TEST_ERROR table.' || CHR(10) ||
+    'Procedure: ' || v_procedure_name;
+    
+    -- Mail gönder
+    NORTHI.SEND_MAIL(
+    PRECIPIENT => v_recipient,
+    PSUBJECT   => v_mail_subject,
+    PMESSAGE   => v_mail_message
+    );
+    
+    COMMIT;
+    
+EXCEPTION
+    WHEN OTHERS THEN
+    write_log('ERROR', 'Failed to send notification email: ' || SQLERRM);
+END send_notification_mail;
+
+BEGIN 
+    -- Başlangıç logu
+    write_log('STARTED', 'Backfill process started for date: ' || TO_CHAR(XDATA_DATE, 'YYYY-MM-DD HH24:MI:SS') || 
+              ' (Minimum missing threshold: ' || v_min_missing_threshold || ')');
+
+    -- Tablo bulunamadığında hata kontrolü
+    BEGIN
+    SELECT TABLE_NAME INTO v_table_name 
+    FROM (
+    SELECT TABLE_NAME, LOADED_DATA_COUNT 
+    FROM NORTHI_PARSER_SETTINGS.PARSER_SQLLDR_LOGS 
+    WHERE DATA_DATE = XDATA_DATE
+    AND TABLE_NAME IN (
+    SELECT PARENT_NAME 
+    FROM NORTHI_LOADER_PARENTS 
+    WHERE TABLE_NAME = 'CELLSTS_4G' 
+    AND ACTIVE = 1
+    ) 
+    AND OPERATOR_NAME = 'VODAFONE'
+    ORDER BY LOADED_DATA_COUNT DESC
+    ) 
+    WHERE ROWNUM = 1;
+    
+    write_log('INFO', 'Source table selected: ' || v_table_name);
+    
+    EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+    write_log('ERROR', 'No valid source table found for date: ' || TO_CHAR(XDATA_DATE, 'YYYY-MM-DD HH24:MI:SS'));
+    send_notification_mail; -- Hata durumunda mail gönder
+    RAISE_APPLICATION_ERROR(-20001, 'No valid source table found for date: ' || XDATA_DATE);
+    END;
+
+    BEGIN
+    EXECUTE IMMEDIATE 'TRUNCATE TABLE NORTHI_DATA.ET_LIST_ENODEB_CELL';
+    write_log('INFO', 'ET_LIST_ENODEB_CELL table truncated');
+    
+    -- Missing cell'leri tespit edip ET_LIST_ENODEB_CELL tablosuna ekleme
+    EXECUTE IMMEDIATE 
+    'INSERT INTO northi_data.ET_LIST_ENODEB_CELL (
+    SELECT distinct a.* 
+    FROM northi_Data.LIST_ENODEB_CELL a,
+    (
+    SELECT network_id, enodeb_id
+    FROM hizir2.' || v_table_name || ' a, northi_data.LIST_ENODEB_CELL b
+    WHERE a.network_id = b.cell_id 
+    AND data_date = TO_DATE(''' || TO_CHAR(XDATA_DATE, 'YYYY-MM-DD HH24:MI:SS') || ''', ''YYYY-MM-DD HH24:MI:SS'')
+    MINUS
+    SELECT network_id, enodeb_id 
+    FROM NORTHI_DATA.CELLSTS_4G
+    WHERE fragment_date = TO_DATE(''' || TO_CHAR(XDATA_DATE, 'YYYY-MM-DD HH24:MI:SS') || ''', ''YYYY-MM-DD HH24:MI:SS'') 
+    AND dtype = 1
+    ) b
+    WHERE a.cell_id = b.network_id)';
+ 
+    v_missing_count := SQL%ROWCOUNT;
+    COMMIT;
+    
+    write_log('INFO', 'Found ' || v_missing_count || ' missing cells (Threshold: ' || v_min_missing_threshold || ')');
+    
+    EXCEPTION
+    WHEN OTHERS THEN
+    write_log('ERROR', 'Error finding missing cells: ' || SQLERRM);
+    RAISE;
+    END;
+
+    -- Missing data sayısı kontrolü ve işlem kararı
+    IF v_missing_count >= v_min_missing_threshold THEN
+    
+    write_log('INFO', 'Missing count (' || v_missing_count || ') is above threshold (' || v_min_missing_threshold || '). Processing will continue.');
+    
+    -- Aggregate silme işlemi (sadece eşik aşıldığında)
+    BEGIN
+    DELETE /*+ PARALLEL(12) */ FROM NORTHI_DATA.CELLSTS_4G
+    WHERE FRAGMENT_DATE = XDATA_DATE AND DTYPE > 1;
+    
+    write_log('INFO', 'Deleted ' || SQL%ROWCOUNT || ' aggregate records (DTYPE>1)');
+    COMMIT;
+    
+    EXCEPTION
+    WHEN OTHERS THEN
+    write_log('ERROR', 'Error deleting aggregates: ' || SQLERRM);
+    RAISE;
+    END;
+
+    -- Missing cell'leri işle
+    BEGIN
+    P_CELLSTS_4G_MISSING(XDATA_DATE);
+    write_log('INFO', 'Missing cells processed successfully');
+    
+    EXCEPTION
+    WHEN OTHERS THEN
+    write_log('ERROR', 'Error processing missing cells: ' || SQLERRM);
+    RAISE;
+    END;
+    
+    -- Aggregate işlemleri (sadece eşik aşıldığında)
+    FOR XRUN_PROCS IN (
+    SELECT EXEC_PROCS, DTYPE FROM ( 
+    SELECT DISTINCT 
+    'BEGIN P_'||TABLE_NAME||'(TO_DATE('''||TO_CHAR(XDATA_DATE,'DD.MM.YYYY HH24')||''',''DD.MM.YYYY HH24''));END;' EXEC_PROCS, 
+    DTYPE 
+    FROM northi_loader_process 
+    WHERE ORG_TABLE='CELLSTS_4G'
+    AND DATA_DATE=XDATA_DATE 
+    AND DTYPE>1
+    ORDER BY DTYPE 
+    )
+    ) LOOP
+    BEGIN
+    EXECUTE IMMEDIATE XRUN_PROCS.EXEC_PROCS;
+    write_log('INFO', 'Successfully executed DTYPE ' || XRUN_PROCS.DTYPE || ' aggregation');
+    
+    EXCEPTION
+    WHEN OTHERS THEN
+    v_error_msg := 'Error in DTYPE ' || XRUN_PROCS.DTYPE || ' aggregation: ' || SQLERRM;
+    write_log('ERROR', v_error_msg);
+    -- Hata logla ama devam et
+    END;
+    END LOOP;
+    
+    ELSIF v_missing_count > 0 THEN
+    write_log('WARNING', 'Missing count (' || v_missing_count || ') is below threshold (' || v_min_missing_threshold || '). Delete and aggregate operations skipped.');
+    
+    ELSE
+    write_log('INFO', 'No missing cells found, skipping all processing operations');
+    END IF;
+
+    -- Başarılı tamamlanma logu
+    write_log('COMPLETED', 'Backfill process completed successfully in ' || 
+    ROUND((SYSDATE - v_start_time) * 24 * 60, 2) || ' minutes. Missing count: ' || v_missing_count || 
+    ', Threshold: ' || v_min_missing_threshold || 
+    ', Processed: ' || CASE WHEN v_missing_count >= v_min_missing_threshold THEN 'YES' ELSE 'NO' END);
+
+    -- Başarılı tamamlanma durumunda da mail gönder
+    send_notification_mail;
+
+EXCEPTION
+    WHEN OTHERS THEN
+    write_log('FATAL_ERROR', 'Backfill process failed: ' || SQLERRM || CHR(10) || 
+    'Error Stack: ' || DBMS_UTILITY.FORMAT_ERROR_STACK);
+    
+    -- Hata durumunda mail gönder
+    send_notification_mail;
+    
+    ROLLBACK;
+    RAISE;
+END;
+/
