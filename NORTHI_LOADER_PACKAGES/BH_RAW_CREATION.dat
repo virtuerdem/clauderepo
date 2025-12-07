@@ -1,0 +1,356 @@
+
+  CREATE OR REPLACE EDITIONABLE PACKAGE BODY "NORTHI_LOADER"."BH_RAW_CREATION" AS
+/******************************************************************************
+   NAME:       BH_RAW_CREATION
+   PURPOSE:
+
+   REVISIONS:
+   Ver        Date        Author           Description
+   ---------  ----------  ---------------  ------------------------------------
+   1.0        24/10/2018      bahadir.ozan       1. Created this package.
+
+--** Kullanilan ozet tablolar :
+    - NORTHI_LOADER.BH_RAW_RESULT
+    - NORTHI_LOADER.BH_RAW_TABLES
+
+******************************************************************************/
+
+    G_PROC_NAME             VARCHAR2(40);
+    G_STATE                 VARCHAR2(40);
+    G_NEW_TABS_SCHEMA       VARCHAR2(20):= 'U2000_NEW';
+    G_ORJ_TABS_SCHEMA       VARCHAR2(20):= 'HIZIR2';
+    G_RESULT                VARCHAR2(4000 BYTE);
+    G_START_TIME            DATE;
+
+    PROCEDURE INSERT_TO_DBH_RAW_TABLE(P_DATE        DATE,
+                                      P_TECH_TYPE   VARCHAR2,
+                                      P_TABLE_NAME  VARCHAR2 DEFAULT NULL) IS
+        V_ERRM          VARCHAR2(4000);
+        V_ERRCODE       NUMBER;
+
+        V_TECH_TABS         VARCHAR2(40 CHAR);
+        V_2ND_FROM          VARCHAR2(1000 CHAR);
+        V_DATE_CLAUSE       VARCHAR2(300);
+        V_SQL               CLOB;
+        V_SQLCODE           NUMBER;
+        V_SQLERRM           VARCHAR2(2000 BYTE);
+        L_CNT_ERR           NUMBER;
+        L_CNT_COMMIT        NUMBER := 0;
+        V_SUCCESFUL_ROW_CNT NUMBER;
+        V_TABLE_NAME        VARCHAR2(50 BYTE);
+
+    BEGIN
+
+        V_TECH_TABS     := CASE P_TECH_TYPE
+                            WHEN 'HW2G' THEN 'NORTHI_DATA.DBH_CELLSTS'
+                            WHEN 'HW3G' THEN 'NORTHI_DATA.DBH_CELL_STATISTICS'
+                            WHEN 'HW4G' THEN 'NORTHI_DATA.DBH_CELLSTS_4G'
+                            ELSE NULL
+                           END;
+
+        V_DATE_CLAUSE   := ' FRAGMENT_DATE BETWEEN TO_DATE('''|| TO_CHAR(P_DATE,'DD.MM.YYYY')||''',''DD.MM.YYYY'') AND TO_DATE(''' || TO_CHAR(P_DATE,'DD.MM.YYYY') || ''',''DD.MM.YYYY'')+23.9/24';
+
+        V_2ND_FROM      := '
+                            A, (
+                                SELECT DISTINCT NETWORK_ID,BH_TYPE,FRAGMENT_DATE
+                                  FROM ' || V_TECH_TABS || '
+                                 WHERE ' || V_DATE_CLAUSE || '
+                            ) Y';
+
+G_STATE     := 'INSERT_TO_DBH_RAW_TABLE for ' || P_TECH_TYPE;
+        FOR R IN
+        (
+            SELECT DISTINCT TABLE_NAME
+              FROM NORTHI_PARSER_SETTINGS.PARSER_RAW_TABLE_LIST
+             WHERE TABLE_TYPE = 'CELL'
+               AND SYSTEM_TYPE = P_TECH_TYPE
+        )LOOP
+
+            IF P_TABLE_NAME IS NOT NULL THEN
+                IF V_TABLE_NAME <> R.TABLE_NAME THEN
+                    CONTINUE;
+                ELSE
+                    V_TABLE_NAME    := P_TABLE_NAME;
+                END IF;
+            ELSE
+                V_TABLE_NAME    := R.TABLE_NAME;
+            END IF;
+
+            L_CNT_COMMIT    := L_CNT_COMMIT + 1;
+
+            V_SQL       := 'INSERT /*+ APPEND */INTO ' || G_NEW_TABS_SCHEMA || '.'|| V_TABLE_NAME   || CHR(13) ||
+                           'SELECT /*+ PARALLEL(20) */A.*, BH_TYPE'                                 || CHR(13) ||
+                           '  FROM ' || G_ORJ_TABS_SCHEMA || '.' || V_TABLE_NAME || V_2ND_FROM      || CHR(13) ||
+                           ' WHERE A.NETWORK_ID = Y.NETWORK_ID'                                     || CHR(13) ||
+                           '   AND A.DATA_DATE = Y.FRAGMENT_DATE'                                   || CHR(13);
+
+            BEGIN
+                EXECUTE IMMEDIATE V_SQL;
+                V_SUCCESFUL_ROW_CNT     := SQL%ROWCOUNT;
+                COMMIT;
+                G_RESULT                := V_SUCCESFUL_ROW_CNT || ' rows inserted to ' || V_TABLE_NAME || ' table for ' || V_TECH_TABS;
+                INSERT INTO NORTHI_LOADER.BH_RAW_RESULT(SEQ, TABLE_NAME, DATE_TIME, PROC_NAME, SQLTEXT, ERROR_DESC, IS_SUCCESS)
+                VALUES(NORTHI_CMEX.SEQ_NI_TEST_ERROR.NEXTVAL, V_TABLE_NAME, SYSDATE, G_PROC_NAME || '-INSERT_TO_DBH_RAW_TABLE', V_SQL || CHR(13) || CHR(13) || TO_CLOB(G_RESULT), NULL, 'T');
+            EXCEPTION
+            WHEN OTHERS THEN
+                V_SQLCODE   := SQLCODE;
+                V_SQLERRM   := SQLERRM;
+                INSERT INTO NORTHI_LOADER.BH_RAW_RESULT(SEQ, TABLE_NAME, DATE_TIME, PROC_NAME, SQLTEXT, ERROR_DESC, IS_SUCCESS)
+                VALUES(NORTHI_CMEX.SEQ_NI_TEST_ERROR.NEXTVAL, V_TABLE_NAME, SYSDATE, G_PROC_NAME || '-INSERT_TO_DBH_RAW_TABLE', V_SQL, V_SQLCODE || ' - ' || V_SQLERRM, 'F');
+            END;
+            COMMIT;
+
+        END LOOP;
+
+        SELECT COUNT(*)
+          INTO L_CNT_ERR
+          FROM NORTHI_LOADER.BH_RAW_RESULT
+         WHERE PROC_NAME = G_PROC_NAME
+           AND IS_SUCCESS = 'F'
+           AND DATE_TIME BETWEEN G_START_TIME AND SYSDATE;
+
+        IF L_CNT_ERR > 0 THEN
+            NORTHI.SEND_MAIL(PRECIPIENT     => 'cagdas.topal@ttgint.com',
+                             PSUBJECT       => G_PROC_NAME || ' procedure calismasinda en az bir tabloda hata alindi. Hata adedi: ' || L_CNT_ERR,
+                             PMESSAGE       => G_PROC_NAME || ' procedure calismasinda en az bir tabloda hata alindi. Hata adedi: ' || L_CNT_ERR);
+    --        RAISE_APPLICATION_ERROR(-20001, 'EN AZ BIR HATA');
+        END IF;
+
+--    EXCEPTION
+--        WHEN OTHERS THEN
+--            V_ERRM      :=SQLERRM;
+--            V_ERRCODE   :=SQLCODE;
+--            INSERT INTO NORTHI_ERROR_LOG (USER_NAME, ERROR_CODE, ERROR_MSG, TABLE_NAME, DATE_TIME, PROCEDURE_NAME, SQLTEXT) 
+--            VALUES (USER, V_ERRCODE, V_ERRM, NULL, SYSDATE, G_PROC_NAME, G_STATE);
+--            COMMIT;
+--            RAISE;
+
+    END;
+
+    PROCEDURE CREATE_ABSENT_TABLES(P_TECH_TYPE VARCHAR2) AS
+
+        V_SQL               CLOB;
+        V_ERRM              VARCHAR2(4000);
+        V_ERRCODE           NUMBER;
+        V_TABS              VARCHAR2(4000 BYTE);
+        V_TABS_ERROR        VARCHAR2(4000 BYTE);
+
+    BEGIN
+
+G_STATE     := 'CREATE_ABSENT_TABLES for ' || P_TECH_TYPE;
+        FOR R IN
+        (
+            SELECT DISTINCT TABLE_NAME
+              FROM NORTHI_PARSER_SETTINGS.PARSER_RAW_TABLE_LIST P
+             WHERE TABLE_TYPE = 'CELL'
+               AND SYSTEM_TYPE = P_TECH_TYPE
+               AND NOT EXISTS
+                    (
+                        SELECT 1
+                          FROM NORTHI_LOADER.BH_RAW_TABLES B
+                         WHERE P.TABLE_NAME = B.TABLE_NAME
+                    )
+        )LOOP
+
+            V_SQL       := 'CREATE TABLE ' || G_NEW_TABS_SCHEMA || '.' || R.TABLE_NAME || ' AS SELECT A.*, 1 AS BH_TYPE FROM ' || G_ORJ_TABS_SCHEMA || '.' || R.TABLE_NAME || ' A WHERE 1=0';
+
+            BEGIN
+                EXECUTE IMMEDIATE V_SQL;
+                V_TABS  := V_TABS || '''' || R.TABLE_NAME || ''',';
+            EXCEPTION
+                WHEN OTHERS THEN
+                    V_TABS_ERROR    := V_TABS_ERROR || '''' || R.TABLE_NAME || ''',';
+                    V_ERRM                  :=SQLERRM;
+                    V_ERRCODE               :=SQLCODE;
+--                    IF V_ERRCODE <> 0 THEN
+--                        insert into northi_loader.tmp_tmp(V_SQL, ORD ,DATE_TIME ) values (P_TECH_TYPE || ' - ' || v_sql || ' - ' || V_ERRCODE || ' - ' || V_ERRM,1,SYSDATE); commit;
+--                    END IF;
+            END;
+
+        END LOOP;
+        V_TABS          := SUBSTR(V_TABS, 1, LENGTH(V_TABS)-1);
+        V_TABS_ERROR    := SUBSTR(V_TABS_ERROR, 1, LENGTH(V_TABS_ERROR)-1);
+
+
+        IF V_TABS IS NOT NULL THEN  -- tablo uretildiyse
+
+            V_SQL   := '
+            INSERT INTO NORTHI_LOADER.BH_RAW_TABLES(OWNER, TABLE_NAME, COLUMN_NAME, DATA_TYPE, DATA_LENGTH, CREATED_DATE, TECH_TYPE)
+            SELECT OWNER, TABLE_NAME, COLUMN_NAME, DATA_TYPE, DATA_LENGTH, SYSDATE, ''' || P_TECH_TYPE || '''
+              FROM ALL_TAB_COLUMNS
+             WHERE TABLE_NAME IN (' || V_TABS || ')
+               AND OWNER = ''' || G_NEW_TABS_SCHEMA || '''
+             ORDER BY TABLE_NAME, COLUMN_ID';
+
+--            insert into northi_loader.tmp_tmp(V_SQL, ORD ,DATE_TIME ) values (P_TECH_TYPE || ' - ' || v_sql,2,SYSDATE); commit;
+
+            EXECUTE IMMEDIATE V_SQL;
+
+            G_RESULT                := V_TABS || ' tables are created successfully';
+
+            INSERT INTO NORTHI_LOADER.BH_RAW_RESULT(SEQ, TABLE_NAME, DATE_TIME, PROC_NAME, SQLTEXT, ERROR_DESC, IS_SUCCESS)
+            VALUES(NORTHI_CMEX.SEQ_NI_TEST_ERROR.NEXTVAL, V_TABS, SYSDATE, G_PROC_NAME || '-CREATE_ABSENT_TABLES', TO_CLOB(G_RESULT), NULL, 'T');
+
+        END IF;
+
+        IF V_TABS_ERROR IS NOT NULL THEN
+
+            G_RESULT                := V_TABS_ERROR || ' tables CANNOT BE created!';
+            V_ERRM                  :=SQLERRM;
+            V_ERRCODE               :=SQLCODE;
+
+            IF V_ERRCODE <> 0 THEN
+                INSERT INTO NORTHI_LOADER.BH_RAW_RESULT(SEQ, TABLE_NAME, DATE_TIME, PROC_NAME, SQLTEXT, ERROR_DESC, IS_SUCCESS)
+                VALUES(NORTHI_CMEX.SEQ_NI_TEST_ERROR.NEXTVAL, V_TABS_ERROR, SYSDATE, G_PROC_NAME || '-CREATE_ABSENT_TABLES', NULL, TO_CLOB(G_RESULT) || '->' || V_ERRM, 'F');
+            END IF;
+
+        END IF;
+        COMMIT;
+
+    END;
+
+    PROCEDURE UPDATE_COLUMN_COUNT AS
+    BEGIN
+
+G_STATE     := 'UPDATE_COLUMN_COUNT';
+         MERGE INTO NORTHI_LOADER.BH_RAW_TABLES A
+         USING (SELECT COUNT(*) CN,TABLE_NAME FROM NORTHI_LOADER.BH_RAW_TABLES GROUP BY TABLE_NAME)B
+            ON (A.TABLE_NAME = B.TABLE_NAME)
+          WHEN MATCHED THEN
+        UPDATE 
+           SET A.COLUMN_COUNT = B.CN
+         WHERE A.COLUMN_COUNT <> B.CN
+            OR A.COLUMN_COUNT IS NULL;
+
+        COMMIT;
+
+    END;
+
+    PROCEDURE ALTER_CHANGED_TABLE(P_TECH_TYPE   VARCHAR2) AS
+
+        V_SQL           VARCHAR2(1000 BYTE);
+        V_ERRM          VARCHAR2(4000);
+        V_ERRCODE       NUMBER;
+
+    BEGIN
+
+G_STATE     := 'ALTER_CHANGED_TABLE - ADD';
+        FOR R IN
+        (
+            SELECT '(' || LISTAGG(COLUMN_NAME || ' ' || DATA_TYPE || CASE A.DATA_TYPE WHEN 'VARCHAR2' THEN ' (' || DATA_LENGTH || ')' ELSE NULL END,
+                           ',')
+                           WITHIN GROUP (ORDER BY COLUMN_ID) || ')-' || TABLE_NAME AS TABS,
+                   TABLE_NAME
+              FROM ALL_TAB_COLUMNS A
+             WHERE 1=1
+               AND NOT EXISTS
+                    (
+                        SELECT 1
+                          FROM NORTHI_LOADER.BH_RAW_TABLES B
+                         WHERE A.TABLE_NAME = B.TABLE_NAME
+                           AND A.COLUMN_NAME = B.COLUMN_NAME
+                    )
+               AND EXISTS
+                    (
+                        SELECT 1
+                          FROM NORTHI_LOADER.BH_RAW_TABLES B
+                         WHERE A.TABLE_NAME = B.TABLE_NAME
+                           AND B.TECH_TYPE = P_TECH_TYPE
+                    )
+               AND OWNER IN 'U2000_NEW'
+--               AND TABLE_NAME IN ('SR_PACKET_ASSIGN_CAPA','SR_IN_IN_INTCEL_HOVER_PER_CELL','CELL_STATISTICS_1')
+             GROUP BY TABLE_NAME
+        )LOOP
+
+            V_SQL       := 'ALTER TABLE ' || G_NEW_TABS_SCHEMA || '.' || SUBSTR(R.TABS,INSTR(R.TABS,'-')+1) || ' ADD ' || SUBSTR(R.TABS,1,INSTR(R.TABS,'-')-1);
+
+            BEGIN
+                EXECUTE IMMEDIATE V_SQL;
+G_RESULT        := SUBSTR(R.TABS,1,INSTR(R.TABS,'-')-1) || ' column(s) added to ' ||
+                                           G_NEW_TABS_SCHEMA || '.' || SUBSTR(R.TABS,INSTR(R.TABS,'-')+1) || ' table';
+                INSERT INTO NORTHI_LOADER.BH_RAW_RESULT(SEQ, TABLE_NAME, DATE_TIME, PROC_NAME, SQLTEXT, ERROR_DESC, IS_SUCCESS)
+                VALUES(NORTHI_CMEX.SEQ_NI_TEST_ERROR.NEXTVAL, G_NEW_TABS_SCHEMA || '.' || SUBSTR(R.TABS,INSTR(R.TABS,'-')+1), 
+                       SYSDATE, G_PROC_NAME || '-ALTER_CHANGED_TABLE', TO_CLOB(G_RESULT), NULL, 'T');
+            EXCEPTION
+                WHEN OTHERS THEN
+                    V_ERRM      :=SQLERRM;
+                    V_ERRCODE   :=SQLCODE;
+G_RESULT        := SUBSTR(R.TABS,1,INSTR(R.TABS,'-')-1) || ' column(s) CANNOT BE added to ' ||
+                                               G_NEW_TABS_SCHEMA || '.' || SUBSTR(R.TABS,INSTR(R.TABS,'-')+1) || ' table';
+                    INSERT INTO NORTHI_LOADER.BH_RAW_RESULT(SEQ, TABLE_NAME, DATE_TIME, PROC_NAME, SQLTEXT, ERROR_DESC, IS_SUCCESS)
+                    VALUES(NORTHI_CMEX.SEQ_NI_TEST_ERROR.NEXTVAL, G_NEW_TABS_SCHEMA || '.' || SUBSTR(R.TABS,INSTR(R.TABS,'-')+1), 
+                           SYSDATE, G_PROC_NAME || '-ALTER_CHANGED_TABLE', NULL, TO_CLOB(G_RESULT) || '->' || V_ERRM, 'F');
+            END;
+
+            COMMIT;
+
+        END LOOP;
+
+G_STATE := 'CALL UPDATE_COLUMN_COUNT';
+        UPDATE_COLUMN_COUNT;
+
+    END;
+
+    PROCEDURE EXECUTE_ALL(P_DATE            DATE,
+                          P_TECH_TYPE       VARCHAR2 DEFAULT NULL,
+                          P_WANT_TO_INSERT  VARCHAR2 DEFAULT 'F',
+                          P_WANT_TO_CREATE  VARCHAR2 DEFAULT 'F',
+                          P_TABLE_TO_CREATE VARCHAR2 DEFAULT NULL,
+                          P_TABLE_TO_INSERT VARCHAR2 DEFAULT NULL) IS
+        V_ERRM          VARCHAR2(4000);
+        V_ERRCODE       NUMBER;
+
+        V_TECH_TYPES    NORTHI_DATA.VARCHARTABLE := NORTHI_DATA.VARCHARTABLE('HW2G','HW3G','HW4G');
+        V_TECH_TYPE     VARCHAR2(4 BYTE);
+
+    BEGIN
+
+        G_START_TIME    := SYSDATE;
+
+        G_PROC_NAME     := $$PLSQL_UNIT;
+
+        FOR I IN 1..V_TECH_TYPES.COUNT LOOP
+
+            IF P_TECH_TYPE IS NOT NULL THEN
+                V_TECH_TYPE     := P_TECH_TYPE;
+            ELSE
+                V_TECH_TYPE     := V_TECH_TYPES(I);
+            END IF;
+
+            IF P_WANT_TO_CREATE = 'T' THEN
+G_STATE := 'CALL CREATE_ABSENT_TABLES';
+                CREATE_ABSENT_TABLES(P_TECH_TYPE   => V_TECH_TYPE);
+            END IF;
+G_STATE := 'CALL ALTER_CHANGED_TABLE';
+            ALTER_CHANGED_TABLE(P_TECH_TYPE   => V_TECH_TYPE);
+
+            IF P_WANT_TO_INSERT = 'T' THEN
+G_STATE := 'CALL INSERT_TO_DBH_RAW_TABLE';
+                INSERT_TO_DBH_RAW_TABLE(P_DATE          => P_DATE,
+                                        P_TECH_TYPE     => V_TECH_TYPE,
+                                        P_TABLE_NAME    => P_TABLE_TO_INSERT);
+
+            END IF;
+
+            IF P_TECH_TYPE IS NOT NULL THEN     -- NULL gonderildiyse normal job calismasi.
+                CONTINUE;                       -- Dolu gönderilirse sadece o TECH_TYPE icin calissin diger teknolojiler icin calismadan donguden ciksin.
+            END IF;
+
+            DBMS_OUTPUT.PUT_LINE('P_TECH_TYPE->' || P_TECH_TYPE || '__V_TECH_TYPE->' || V_TECH_TYPE);
+
+        END LOOP;
+
+    EXCEPTION
+        WHEN OTHERS THEN
+            V_ERRM      :=SQLERRM;
+            V_ERRCODE   :=SQLCODE;
+            INSERT INTO NORTHI_ERROR_LOG (USER_NAME, ERROR_CODE, ERROR_MSG, DATE_TIME, PROCEDURE_NAME,SQLTEXT) 
+            VALUES (USER, V_ERRCODE, V_ERRM, SYSDATE, G_PROC_NAME, G_STATE);
+            COMMIT;                   
+                       
+            RAISE;
+
+    END;
+
+END BH_RAW_CREATION;
+/

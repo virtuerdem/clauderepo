@@ -1,0 +1,2910 @@
+
+  CREATE OR REPLACE EDITIONABLE PACKAGE BODY "NORTHI_LOADER"."EXTRA_WORKS_VF" AS
+/******************************************************************************
+   NAME:       EXTRA_WORKS_VF
+   PURPOSE:
+
+   REVISIONS:
+   VER        DATE        AUTHOR           DESCRIPTION
+   ---------  ----------  ---------------  ------------------------------------
+   1.0        1/5/2011    VESILE TASKIRAN  1. THIS PACKAGE INCLUDES NON NORTHI TABLES. WHICH ARE USED BY VF AND VENDORS.
+******************************************************************************/
+  PROCEDURE SUBSCRIBER_BTS_SAATLIK(XDATA_DATE DATE)
+  AS
+  BEGIN
+    DELETE FROM NORTHI_CUST_IBM.BTS_ABONE_SAYILARI_SAATLIK
+    WHERE TARIH BETWEEN TRUNC(SYSDATE)-10 AND TRUNC(SYSDATE);
+    
+    COMMIT;
+    
+    DELETE FROM  NORTHI_CUST_IBM.BTS_ABONE_SAYILARI_SAATLIK
+    WHERE TARIH BETWEEN TRUNC(XDATA_DATE) AND TRUNC(XDATA_DATE)+23/24;
+    
+    COMMIT;
+
+        
+        INSERT INTO NORTHI_CUST_IBM.BTS_ABONE_SAYILARI_SAATLIK(BSC_NAME,BTS_NAME,TARIH,ABONE_SAYISI)
+        SELECT BSC,BTS_NAME,TARIH,bts_abone_sayisi_traf
+        FROM 
+        (
+        select ww.BSC,
+        ww.BTS_NAME,
+        ww.TARIH,
+        ww.bts_abone_sayisi_traf
+        from
+        (
+        select 
+        l1.bsc,
+        bts_name,
+        bts_id, 
+        l1.lac,
+        ceil(decode(top_lac_traf,0,0,bts_lac_traf/top_lac_traf*abone)) bts_abone_sayisi_traf,
+         abone, 
+         l1.plaka plaka, L1.TARIH tarih from 
+        (
+        select bsc,bts_name,plaka, lac, sum(traf)bts_lac_traf, sum(call) as bts_lac_call, tarih, bts_id from
+        (
+        select bsc, substr(al.GSM_CELL_ID,8,5) as lac, bts_name, cell, tch_traffic as traf,TCH_NORMSEIZS as call, 
+                lst.CITY_CODE plaka, 
+                fragment_date tarih, substr(cell_name,11,8) bts_id 
+        from  northi_cust_bss_mozturk.TBL_2G_CELL_ALL al,(SELECT  A.CELL_ID, A.CELL_NAME, A.bts_name, B.CITY_CODE 
+        FROM NORTHI_DATA.OMC_BSC_BTS_CELL_LIST A, NORTHI_DATA.CITY_SITE_CELL_LIST B
+        WHERE A.CELL_ID=B.CELL_ID) lst, NORTHI_DATA.CELLSTS ist
+        where al.cell=lst.CELL_NAME
+        and ist.network_id=lst.cell_id
+        and ist.dtype=1
+        and ist.fragment_date between TRUNC(XDATA_DATE) AND TRUNC(XDATA_DATE)+23/24
+        )
+        group by bsc, bts_name,bts_id, plaka, lac, tarih
+        order by bsc, lac
+        ) l1,
+        (
+        select lac, sum(traf) top_lac_traf, sum(call) top_lac_call, tarih from
+        (
+        select bsc, substr(al.GSM_CELL_ID,8,5) as lac, cell, tch_traffic as traf, TCH_NORMSEIZS as call, fragment_date tarih from  northi_cust_bss_mozturk.TBL_2G_CELL_ALL al, NORTHI_DATA.OMC_BSC_BTS_CELL_LIST lst, NORTHI_DATA.CELLSTS ist
+        where al.cell=lst.CELL_NAME
+        and ist.network_id=lst.cell_id
+        and ist.dtype=1
+        and lst.CELL_NAME in (select distinct cell from northi_cust_bss_mozturk.TBL_2G_CELL_ALL gg
+        where substr(gg.GSM_CELL_ID,8,5) in (select distinct substr(al.GSM_CELL_ID,8,5) as lac from northi_cust_bss_mozturk.TBL_2G_CELL_ALL al 
+        ))
+        and ist.fragment_date between TRUNC(XDATA_DATE) AND TRUNC(XDATA_DATE)+23/24
+        )
+        group by  lac, tarih
+        order by  lac
+        ) l2, 
+        (
+        select lac, abone, hr.tarih from NORTHI_LOADER.LAC_MSC_HOURLY hr 
+        where hr.TARIH between  TRUNC(XDATA_DATE) AND TRUNC(XDATA_DATE)+23/24
+        ) l3
+        where l1.lac=l2.lac
+        and l1.lac=l3.lac
+        and l1.tarih=l2.tarih
+        and l1.tarih=l3.tarih
+        order by bsc,bts_name, l1.lac, l1.tarih
+        ) ww,
+        NORTHI_CUST_IBM.BTS_LOKASYON_BILGISI lb
+        where ww.bts_name=lb.sitename(+)
+        )
+        
+        COMMIT;
+   
+  END;
+  PROCEDURE SUBSCRIBER_NODEB_SAATLIK(XDATA_DATE DATE)
+  AS
+  BEGIN
+    DELETE FROM NORTHI_CUST_IBM.NODEB_ABONE_SAYILARI_SAATLIK
+    WHERE TARIH BETWEEN TRUNC(SYSDATE)-10 AND TRUNC(SYSDATE);
+    
+    COMMIT;
+    
+    DELETE FROM  NORTHI_CUST_IBM.NODEB_ABONE_SAYILARI_SAATLIK
+    WHERE TARIH BETWEEN TRUNC(XDATA_DATE) AND TRUNC(XDATA_DATE)+23/24;
+    
+    COMMIT;
+    
+
+    INSERT INTO NORTHI_CUST_IBM.NODEB_ABONE_SAYILARI_SAATLIK(RNC_NAME,NODEB_NAME,ABONE_SAYISI,TARIH)
+    SELECT RNC_NAME,NODEB_NAME,DATA_TOPLAM_ABONE_SAYISI,TARIH1
+    FROM 
+    (
+    SELECT 
+    RNC_NAME,
+    NODEB_NAME,
+    TARIH TARIH1,
+    CEIL(SUM(DATA_TOPLAM_ABONE_SAYISI)) DATA_TOPLAM_ABONE_SAYISI 
+    FROM
+    (
+        SELECT
+        L1.RNC_NAME,
+        L1.NODEB_NAME, 
+        L1.CELL_NAME,
+        L1.TARIH,
+        DECODE(L2.TOTAL_TRAF, 0,0,L1.TOTAL_TRAF/L2.TOTAL_TRAF*L3.ABONE) TOTAL_TRAF_ABONE_SAYISI,
+        DECODE(L2.DATA_TOPLAM_MB,0,0,L1.DATA_TOPLAM_MB/L2.DATA_TOPLAM_MB*L3.ABONE) DATA_TOPLAM_ABONE_SAYISI,
+        DECODE(L2.TOPLAM_ATTEMPT,0,0,L1.TOPLAM_ATTEMPT/L2.TOPLAM_ATTEMPT*ABONE) TOPLAM_ATTEMPT_ABONE_SAYISI,
+        L3.LAC,
+        ABONE
+        FROM 
+        (
+              SELECT 
+              B.RNC_NAME,
+              B.NODEB_NAME,
+              B.CELL_NAME,
+              LST.LAC LAC ,
+              FRAGMENT_DATE TARIH,
+              ROUND (SUM(TRAF_HSDPA) / (1024 * 1024), 2) TRAF_HSDPA,
+              ROUND (SUM(TRAF_HSUPA) / (1024 * 1024), 2) TRAF_HSUPA,
+              ROUND (SUM(PS_DL_DATA) / 8 / (1024 * 1024), 2) R99_PS_DL_DATA,
+              ROUND (SUM(PS_UL_DATA) / 8 / (1024 * 1024), 2) R99_PS_UL_DATA,
+              ROUND (SUM(TRAF_HSDPA+TRAF_HSUPA+PS_DL_DATA/8+PS_UL_DATA/8)  / (1024 * 1024), 2) DATA_TOPLAM_MB,
+              ROUND (SUM(VOICE_ATTEMPT), 2) VOICE_ATTEMPT,
+              ROUND (SUM(DATA_ATTEMPT), 2) DATA_ATTEMPT,
+              ROUND (SUM(VOICE_ATTEMPT+DATA_ATTEMPT), 2) TOPLAM_ATTEMPT,
+              ROUND (SUM(CS_VOICE_CALL_TRAFF), 2) CS_VOICE_CALL_TRAFFIC,
+              ROUND (SUM(CS_VIDEO_CALL_TRAFF), 2) CS_VIDEO_CALL_TRAFF,
+              ROUND (SUM(CS_VOICE_CALL_TRAFF+CS_VIDEO_CALL_TRAFF), 2) TOTAL_TRAF
+              FROM NORTHI_DATA.CELL_STATISTICS A,
+              NORTHI_DATA.LIST_RNC_NODEB_CELL B,
+              (
+                SELECT  DISTINCT NORTHI_CUST_BSS_MOZTURK.sayiyacevir(SUBSTR(LAC,3,4)) LAC, REPLACE(CELLNAME,'"','') CELL_NAME
+                FROM NORTHI_DATA.V_UCELLSETUP LL 
+                WHERE EXPORT_DATE  BETWEEN SYSDATE-15 AND SYSDATE
+              ) LST
+              WHERE A.NETWORK_ID=B.CELL_ID
+              AND LST.CELL_NAME=B.CELL_NAME
+              AND FRAGMENT_DATE BETWEEN TRUNC(XDATA_DATE) AND TRUNC(XDATA_DATE)+23/24
+              AND A.DTYPE=1
+              GROUP BY    B.RNC_NAME, B.NODEB_NAME,B.CELL_NAME,LST.LAC,FRAGMENT_DATE
+              ORDER BY    B.RNC_NAME, B.NODEB_NAME,B.CELL_NAME,LST.LAC,FRAGMENT_DATE
+        ) L1,
+        (
+              SELECT 
+              LST.LAC LAC,
+              FRAGMENT_DATE TARIH ,
+              ROUND (SUM(TRAF_HSDPA) / (1024 * 1024), 2) TRAF_HSDPA,
+              ROUND (SUM(TRAF_HSUPA) / (1024 * 1024), 2) TRAF_HSUPA,
+              ROUND (SUM(PS_DL_DATA) / 8 / (1024 * 1024), 2) R99_PS_DL_DATA,
+              ROUND (SUM(PS_UL_DATA) / 8 / (1024 * 1024), 2) R99_PS_UL_DATA,
+              ROUND (SUM(TRAF_HSDPA+TRAF_HSUPA+PS_DL_DATA/8+PS_UL_DATA/8)  / (1024 * 1024), 2) DATA_TOPLAM_MB,
+              ROUND (SUM(VOICE_ATTEMPT), 2) VOICE_ATTEMPT,
+              ROUND (SUM(DATA_ATTEMPT), 2) DATA_ATTEMPT,
+              ROUND (SUM(VOICE_ATTEMPT+DATA_ATTEMPT), 2) TOPLAM_ATTEMPT,
+              ROUND (SUM(CS_VOICE_CALL_TRAFF), 2) CS_VOICE_CALL_TRAFFIC,
+              ROUND (SUM(CS_VIDEO_CALL_TRAFF), 2) CS_VIDEO_CALL_TRAFF,
+              ROUND (SUM(CS_VOICE_CALL_TRAFF+CS_VIDEO_CALL_TRAFF), 2) TOTAL_TRAF
+              FROM NORTHI_DATA.CELL_STATISTICS A,
+              NORTHI_DATA.LIST_RNC_NODEB_CELL B,
+              (
+                  SELECT DISTINCT NORTHI_CUST_BSS_MOZTURK.sayiyacevir(SUBSTR(LAC,3,4)) LAC, REPLACE(CELLNAME,'"','') CELL_NAME
+                  FROM NORTHI_DATA.V_UCELLSETUP LL 
+                  WHERE EXPORT_DATE   BETWEEN SYSDATE-15 AND SYSDATE
+              ) LST
+              WHERE A.NETWORK_ID=B.CELL_ID
+              AND LST.CELL_NAME=B.CELL_NAME
+              AND FRAGMENT_DATE BETWEEN TRUNC(XDATA_DATE) AND TRUNC(XDATA_DATE)+23/24
+              AND A.DTYPE=1
+              GROUP BY LST.LAC,FRAGMENT_DATE
+              ORDER BY LST.LAC,FRAGMENT_DATE
+        ) L2, 
+        (
+             SELECT LAC, ABONE, HR.TARIH 
+             FROM NORTHI_LOADER.LAC_MSC_HOURLY HR 
+             WHERE HR.TARIH BETWEEN   TRUNC(XDATA_DATE) AND TRUNC(XDATA_DATE)+23/24
+        ) L3
+        WHERE L1.LAC=L2.LAC
+        AND L1.LAC=L3.LAC
+        AND L1.TARIH=L2.TARIH
+        AND L1.TARIH=L3.TARIH
+    )
+    GROUP BY RNC_NAME,NODEB_NAME,TARIH
+    );
+   
+    COMMIT;
+  END SUBSCRIBER_NODEB_SAATLIK;
+  PROCEDURE SUBSCRIBER_BSC_SAATLIK(XDATA_DATE DATE)
+  AS
+  BEGIN
+            DELETE FROM NORTHI_CUST_IBM.BSC_ABONE_SAYILARI_SAATLIK
+            WHERE TARIH BETWEEN TRUNC(SYSDATE)-10 AND TRUNC(SYSDATE);
+            
+            COMMIT;
+            
+            DELETE FROM  NORTHI_CUST_IBM.BSC_ABONE_SAYILARI_SAATLIK
+            WHERE TARIH BETWEEN TRUNC(XDATA_DATE) AND TRUNC(XDATA_DATE)+23/24;
+            
+            COMMIT;
+            
+            INSERT INTO  NORTHI_CUST_IBM.BSC_ABONE_SAYILARI_SAATLIK(BSC_NAME,TARIH,ABONE_SAYISI)
+            SELECT BSC, TARIH,CEIL (SUM (BTS_ABONE_SAYISI_TRAF)) BSC_ABONE_SAYISI_TRAF
+            FROM (  SELECT L1.BSC,
+                   BTS_NAME,
+                   BTS_ID,
+                   L1.LAC,
+                   (DECODE (TOP_LAC_TRAF,
+                            0, 0,
+                            BTS_LAC_TRAF / TOP_LAC_TRAF * ABONE))
+                      BTS_ABONE_SAYISI_TRAF,
+                   (DECODE (TOP_LAC_CALL,
+                            0, 0,
+                            BTS_LAC_CALL / TOP_LAC_CALL * ABONE))
+                      BTS_ABONE_SAYISI_CALL,
+                   (DECODE (TOP_LAC_TRAF,
+                            0, 0,
+                            BTS_LAC_TRAF / TOP_LAC_TRAF * ABONE)
+                    / 2
+                    + DECODE (TOP_LAC_CALL,
+                              0, 0,
+                              BTS_LAC_CALL / TOP_LAC_CALL * ABONE)
+                      / 2)
+                      BTS_ABONE_SAYISI_ORTALAMA,
+                   ABONE,
+                   L1.PLAKA IL,
+                   L1.TARIH TARIH
+              FROM (  --BSC ve LAC bazinda toplam trafikler
+
+                      SELECT BSC,
+                             BTS_NAME,
+                             PLAKA,
+                             LAC,
+                             SUM (TRAF) BTS_LAC_TRAF,
+                             SUM (CALL) AS BTS_LAC_CALL,
+                             TARIH,
+                             BTS_ID
+                        FROM (SELECT BSC,
+                                     SUBSTR (AL.GSM_CELL_ID, 8, 5) AS LAC,
+                                     BTS_NAME,
+                                     CELL,
+                                     TCH_TRAFFIC AS TRAF,
+                                     TCH_NORMSEIZS AS CALL,
+                                     LST.CITY_CODE PLAKA,
+                                     FRAGMENT_DATE TARIH,
+                                     SUBSTR (CELL_NAME, 11, 8) BTS_ID
+                                FROM NORTHI_CUST_BSS_MOZTURK.TBL_2G_CELL_ALL AL,
+                                    (SELECT A.BTS_NAME,A.CELL_NAME,A.CELL_ID,   B.CITY_CODE 
+        FROM NORTHI_DATA.OMC_BSC_BTS_CELL_LIST A, NORTHI_DATA.CITY_SITE_CELL_LIST B
+        WHERE A.CELL_ID=B.CELL_ID) LST,
+                                     NORTHI_DATA.CELLSTS IST
+                               WHERE     AL.CELL = LST.CELL_NAME
+                                     AND IST.NETWORK_ID = LST.CELL_ID
+                                     AND IST.DTYPE = 1
+                                     AND IST.FRAGMENT_DATE BETWEEN XDATA_DATE
+                                                               AND XDATA_DATE
+                                                                   + 23 / 24)
+                    GROUP BY BSC,
+                             BTS_NAME,
+                             BTS_ID,
+                             PLAKA,
+                             LAC,
+                             TARIH
+                    ORDER BY BSC, LAC) L1,
+                   (  SELECT LAC,
+                             SUM (TRAF) TOP_LAC_TRAF,
+                             SUM (CALL) TOP_LAC_CALL,
+                             TARIH
+                        FROM (SELECT BSC,
+                                     SUBSTR (AL.GSM_CELL_ID, 8, 5) AS LAC,
+                                     CELL,
+                                     TCH_TRAFFIC AS TRAF,
+                                     TCH_NORMSEIZS AS CALL,
+                                     FRAGMENT_DATE TARIH
+                                FROM NORTHI_CUST_BSS_MOZTURK.TBL_2G_CELL_ALL AL,
+                                     NORTHI_DATA.OMC_BSC_BTS_CELL_LIST LST,
+                                     NORTHI_DATA.CELLSTS IST
+                               WHERE     AL.CELL = LST.CELL_NAME
+                                     AND IST.NETWORK_ID = LST.CELL_ID
+                                     AND IST.DTYPE = 1
+                                     AND LST.CELL_NAME IN
+                                            (SELECT DISTINCT CELL
+                                               FROM NORTHI_CUST_BSS_MOZTURK.TBL_2G_CELL_ALL GG
+                                              WHERE SUBSTR (GG.GSM_CELL_ID, 8, 5) IN
+                                                       (SELECT DISTINCT
+                                                               SUBSTR (
+                                                                  AL.GSM_CELL_ID,
+                                                                  8,
+                                                                  5)
+                                                                  AS LAC
+                                                          FROM NORTHI_CUST_BSS_MOZTURK.TBL_2G_CELL_ALL AL--where  al.BSC='BKAYM01'
+                                                       ))
+                                     AND IST.FRAGMENT_DATE BETWEEN XDATA_DATE
+                                                               AND XDATA_DATE
+                                                                   + 23 / 24)
+                    GROUP BY LAC, TARIH
+                    ORDER BY LAC) L2,
+                   (SELECT LAC, ABONE, HR.TARIH
+                      FROM NORTHI_LOADER.LAC_MSC_HOURLY HR
+                     WHERE HR.TARIH BETWEEN XDATA_DATE AND XDATA_DATE + 23 / 24) L3
+             WHERE     L1.LAC = L2.LAC
+                   AND L1.LAC = L3.LAC
+                   AND L1.TARIH = L2.TARIH
+                   AND L1.TARIH = L3.TARIH
+          ORDER BY BSC,
+                   BTS_NAME,
+                   L1.LAC,
+                   L1.TARIH)
+            GROUP BY BSC, TARIH;
+         
+            COMMIT;
+            
+  END;
+  PROCEDURE SUBSCRIBER_RNC_SAATLIK(XDATA_DATE DATE)
+  AS
+  BEGIN
+        DELETE FROM NORTHI_CUST_IBM.RNC_ABONE_SAYILARI_SAATLIK
+    WHERE TARIH BETWEEN TRUNC(SYSDATE)-10 AND TRUNC(SYSDATE);
+    
+    COMMIT;
+    
+    DELETE FROM  NORTHI_CUST_IBM.RNC_ABONE_SAYILARI_SAATLIK
+    WHERE TARIH BETWEEN TRUNC(XDATA_DATE) AND TRUNC(XDATA_DATE)+23/24;
+    
+    COMMIT;
+    INSERT INTO NORTHI_CUST_IBM.RNC_ABONE_SAYILARI_SAATLIK(RNC_NAME,ABONE_SAYISI,TARIH)
+    SELECT 
+    RNC_NAME,
+    ROUND(SUM(DATA_TOPLAM_ABONE_SAYISI),0) RNC_ABONE_SAYISI,
+    TARIHY
+    FROM
+    (
+        SELECT
+        L1.RNC_NAME,
+        L1.NODEB_NAME, 
+        L1.CELL_NAME,
+        L1.TARIH TARIHY,
+        DECODE(L2.TOTAL_TRAF, 0,0,L1.TOTAL_TRAF/L2.TOTAL_TRAF*L3.ABONE) TOTAL_TRAF_ABONE_SAYISI,
+        DECODE(L2.DATA_TOPLAM_MB,0,0,L1.DATA_TOPLAM_MB/L2.DATA_TOPLAM_MB*L3.ABONE) DATA_TOPLAM_ABONE_SAYISI,
+        DECODE(L2.TOPLAM_ATTEMPT,0,0,L1.TOPLAM_ATTEMPT/L2.TOPLAM_ATTEMPT*ABONE) TOPLAM_ATTEMPT_ABONE_SAYISI,
+        L3.LAC,
+        ABONE
+        FROM 
+        (
+              SELECT 
+              B.RNC_NAME,
+              B.NODEB_NAME,
+              B.CELL_NAME,
+              LST.LAC LAC ,
+              FRAGMENT_DATE TARIH,
+              ROUND (SUM(TRAF_HSDPA) / (1024 * 1024), 2) TRAF_HSDPA,
+              ROUND (SUM(TRAF_HSUPA) / (1024 * 1024), 2) TRAF_HSUPA,
+              ROUND (SUM(PS_DL_DATA) / 8 / (1024 * 1024), 2) R99_PS_DL_DATA,
+              ROUND (SUM(PS_UL_DATA) / 8 / (1024 * 1024), 2) R99_PS_UL_DATA,
+              ROUND (SUM(TRAF_HSDPA+TRAF_HSUPA+PS_DL_DATA/8+PS_UL_DATA/8)  / (1024 * 1024), 2) DATA_TOPLAM_MB,
+              ROUND (SUM(VOICE_ATTEMPT), 2) VOICE_ATTEMPT,
+              ROUND (SUM(DATA_ATTEMPT), 2) DATA_ATTEMPT,
+              ROUND (SUM(VOICE_ATTEMPT+DATA_ATTEMPT), 2) TOPLAM_ATTEMPT,
+              ROUND (SUM(CS_VOICE_CALL_TRAFF), 2) CS_VOICE_CALL_TRAFFIC,
+              ROUND (SUM(CS_VIDEO_CALL_TRAFF), 2) CS_VIDEO_CALL_TRAFF,
+              ROUND (SUM(CS_VOICE_CALL_TRAFF+CS_VIDEO_CALL_TRAFF), 2) TOTAL_TRAF
+              FROM NORTHI_DATA.CELL_STATISTICS A,NORTHI_DATA.LIST_RNC_NODEB_CELL B,
+              (
+                  SELECT DISTINCT  NORTHI_CUST_BSS_MOZTURK.SAYIYACEVIR(SUBSTR(LAC,3,4)) LAC, 
+                  REPLACE(CELLNAME,'"','') CELL_NAME
+                  FROM NORTHI_DATA.V_UCELLSETUP LL 
+                  WHERE EXPORT_DATE BETWEEN SYSDATE-15 AND SYSDATE
+              ) LST
+              WHERE A.NETWORK_ID=B.CELL_ID
+              AND LST.CELL_NAME=B.CELL_NAME
+              AND FRAGMENT_DATE BETWEEN  XDATA_DATE AND XDATA_DATE+23/24
+              AND A.DTYPE=1
+              GROUP BY B.RNC_NAME,B.NODEB_NAME,B.CELL_NAME,LST.LAC,FRAGMENT_DATE
+              ORDER BY B.RNC_NAME,B.NODEB_NAME,B.CELL_NAME,LST.LAC,FRAGMENT_DATE
+    ) L1,
+    (
+              SELECT 
+              LST.LAC LAC,
+              FRAGMENT_DATE TARIH ,
+              ROUND (SUM(TRAF_HSDPA) / (1024 * 1024), 2) TRAF_HSDPA,
+              ROUND (SUM(TRAF_HSUPA) / (1024 * 1024), 2) TRAF_HSUPA,
+              ROUND (SUM(PS_DL_DATA) / 8 / (1024 * 1024), 2) R99_PS_DL_DATA,
+              ROUND (SUM(PS_UL_DATA) / 8 / (1024 * 1024), 2) R99_PS_UL_DATA,
+              ROUND (SUM(TRAF_HSDPA+TRAF_HSUPA+PS_DL_DATA/8+PS_UL_DATA/8)  / (1024 * 1024), 2) DATA_TOPLAM_MB,
+              ROUND (SUM(VOICE_ATTEMPT), 2) VOICE_ATTEMPT,
+              ROUND (SUM(DATA_ATTEMPT), 2) DATA_ATTEMPT,
+              ROUND (SUM(VOICE_ATTEMPT+DATA_ATTEMPT), 2) TOPLAM_ATTEMPT,
+              ROUND (SUM(CS_VOICE_CALL_TRAFF), 2) CS_VOICE_CALL_TRAFFIC,
+              ROUND (SUM(CS_VIDEO_CALL_TRAFF), 2) CS_VIDEO_CALL_TRAFF,
+              ROUND (SUM(CS_VOICE_CALL_TRAFF+CS_VIDEO_CALL_TRAFF), 2) TOTAL_TRAF
+              FROM NORTHI_DATA.CELL_STATISTICS A,
+              NORTHI_DATA.LIST_RNC_NODEB_CELL B,
+              (
+                  SELECT DISTINCT NORTHI_CUST_BSS_MOZTURK.SAYIYACEVIR(SUBSTR(LAC,3,4)) LAC, 
+                  REPLACE(CELLNAME,'"','') CELL_NAME
+                  FROM NORTHI_DATA.V_UCELLSETUP LL 
+                  WHERE EXPORT_DATE  BETWEEN  SYSDATE-15 AND SYSDATE
+              ) LST
+              WHERE A.NETWORK_ID=B.CELL_ID AND LST.CELL_NAME=B.CELL_NAME
+              AND FRAGMENT_DATE BETWEEN   XDATA_DATE AND XDATA_DATE+23/24
+              AND A.DTYPE=1
+              GROUP BY LST.LAC,FRAGMENT_DATE 
+              ORDER BY LST.LAC,FRAGMENT_DATE
+    ) L2, 
+
+    (
+              SELECT DISTINCT LAC, ABONE, HR.TARIH 
+              FROM NORTHI_LOADER.LAC_MSC_HOURLY HR 
+              WHERE HR.TARIH BETWEEN   XDATA_DATE AND XDATA_DATE+23/24
+    ) L3
+    WHERE L1.LAC=L2.LAC
+    AND L1.LAC=L3.LAC
+    AND L1.TARIH=L2.TARIH
+    AND L1.TARIH=L3.TARIH
+    )
+    GROUP BY RNC_NAME,TARIHY;
+    
+    COMMIT;
+    
+  END;
+  PROCEDURE SUBSCRIBER_RNC
+  AS
+  BEGIN
+    DELETE FROM NORTHI_CUST_IBM.RNC_ABONE_SAYILARI;
+   
+    INSERT INTO NORTHI_CUST_IBM.RNC_ABONE_SAYILARI(RNC_NAME,ABONE_SAYISI,TARIH)
+    SELECT RNC_NAME,RNC_ABONE_SAYISI,TARIHY
+    FROM
+    (
+    SELECT 
+    RNC_NAME,
+    ROW_NUMBER() OVER (PARTITION BY RNC_NAME ORDER BY TARIHY DESC) RN,
+    ROUND(SUM(DATA_TOPLAM_ABONE_SAYISI),0) RNC_ABONE_SAYISI,
+    TARIHY
+    FROM
+    (
+        SELECT
+        L1.RNC_NAME,
+        L1.NODEB_NAME, 
+        L1.CELL_NAME,
+        L1.TARIH TARIHY,
+        DECODE(L2.TOTAL_TRAF, 0,0,L1.TOTAL_TRAF/L2.TOTAL_TRAF*L3.ABONE) TOTAL_TRAF_ABONE_SAYISI,
+        DECODE(L2.DATA_TOPLAM_MB,0,0,L1.DATA_TOPLAM_MB/L2.DATA_TOPLAM_MB*L3.ABONE) DATA_TOPLAM_ABONE_SAYISI,
+        DECODE(L2.TOPLAM_ATTEMPT,0,0,L1.TOPLAM_ATTEMPT/L2.TOPLAM_ATTEMPT*ABONE) TOPLAM_ATTEMPT_ABONE_SAYISI,
+        L3.LAC,
+        ABONE
+        FROM 
+        (
+              SELECT 
+              B.RNC_NAME,
+              B.NODEB_NAME,
+              B.CELL_NAME,
+              LST.LAC LAC ,
+              FRAGMENT_DATE TARIH,
+              ROUND (SUM(TRAF_HSDPA) / (1024 * 1024), 2) TRAF_HSDPA,
+              ROUND (SUM(TRAF_HSUPA) / (1024 * 1024), 2) TRAF_HSUPA,
+              ROUND (SUM(PS_DL_DATA) / 8 / (1024 * 1024), 2) R99_PS_DL_DATA,
+              ROUND (SUM(PS_UL_DATA) / 8 / (1024 * 1024), 2) R99_PS_UL_DATA,
+              ROUND (SUM(TRAF_HSDPA+TRAF_HSUPA+PS_DL_DATA/8+PS_UL_DATA/8)  / (1024 * 1024), 2) DATA_TOPLAM_MB,
+              ROUND (SUM(VOICE_ATTEMPT), 2) VOICE_ATTEMPT,
+              ROUND (SUM(DATA_ATTEMPT), 2) DATA_ATTEMPT,
+              ROUND (SUM(VOICE_ATTEMPT+DATA_ATTEMPT), 2) TOPLAM_ATTEMPT,
+              ROUND (SUM(CS_VOICE_CALL_TRAFF), 2) CS_VOICE_CALL_TRAFFIC,
+              ROUND (SUM(CS_VIDEO_CALL_TRAFF), 2) CS_VIDEO_CALL_TRAFF,
+              ROUND (SUM(CS_VOICE_CALL_TRAFF+CS_VIDEO_CALL_TRAFF), 2) TOTAL_TRAF
+              FROM NORTHI_DATA.CELL_STATISTICS A,NORTHI_DATA.LIST_RNC_NODEB_CELL B,
+              (
+                  SELECT DISTINCT  NORTHI_CUST_BSS_MOZTURK.SAYIYACEVIR(SUBSTR(LAC,3,4)) LAC, 
+                  REPLACE(CELLNAME,'"','') CELL_NAME
+                  FROM NORTHI_DATA.V_UCELLSETUP LL 
+                  WHERE EXPORT_DATE BETWEEN SYSDATE-15 AND SYSDATE
+              ) LST
+              WHERE A.NETWORK_ID=B.CELL_ID
+              AND LST.CELL_NAME=B.CELL_NAME
+              AND FRAGMENT_DATE BETWEEN  SYSDATE-15 AND SYSDATE
+              AND A.DTYPE=1
+              GROUP BY B.RNC_NAME,B.NODEB_NAME,B.CELL_NAME,LST.LAC,FRAGMENT_DATE
+              ORDER BY B.RNC_NAME,B.NODEB_NAME,B.CELL_NAME,LST.LAC,FRAGMENT_DATE
+    ) L1,
+    (
+              SELECT 
+              LST.LAC LAC,
+              FRAGMENT_DATE TARIH ,
+              ROUND (SUM(TRAF_HSDPA) / (1024 * 1024), 2) TRAF_HSDPA,
+              ROUND (SUM(TRAF_HSUPA) / (1024 * 1024), 2) TRAF_HSUPA,
+              ROUND (SUM(PS_DL_DATA) / 8 / (1024 * 1024), 2) R99_PS_DL_DATA,
+              ROUND (SUM(PS_UL_DATA) / 8 / (1024 * 1024), 2) R99_PS_UL_DATA,
+              ROUND (SUM(TRAF_HSDPA+TRAF_HSUPA+PS_DL_DATA/8+PS_UL_DATA/8)  / (1024 * 1024), 2) DATA_TOPLAM_MB,
+              ROUND (SUM(VOICE_ATTEMPT), 2) VOICE_ATTEMPT,
+              ROUND (SUM(DATA_ATTEMPT), 2) DATA_ATTEMPT,
+              ROUND (SUM(VOICE_ATTEMPT+DATA_ATTEMPT), 2) TOPLAM_ATTEMPT,
+              ROUND (SUM(CS_VOICE_CALL_TRAFF), 2) CS_VOICE_CALL_TRAFFIC,
+              ROUND (SUM(CS_VIDEO_CALL_TRAFF), 2) CS_VIDEO_CALL_TRAFF,
+              ROUND (SUM(CS_VOICE_CALL_TRAFF+CS_VIDEO_CALL_TRAFF), 2) TOTAL_TRAF
+              FROM NORTHI_DATA.CELL_STATISTICS A,
+              NORTHI_DATA.LIST_RNC_NODEB_CELL B,
+              (
+                  SELECT DISTINCT NORTHI_CUST_BSS_MOZTURK.SAYIYACEVIR(SUBSTR(LAC,3,4)) LAC, 
+                  REPLACE(CELLNAME,'"','') CELL_NAME
+                  FROM NORTHI_DATA.V_UCELLSETUP LL 
+                  WHERE EXPORT_DATE  BETWEEN  SYSDATE-15 AND SYSDATE
+              ) LST
+              WHERE A.NETWORK_ID=B.CELL_ID AND LST.CELL_NAME=B.CELL_NAME
+              AND FRAGMENT_DATE BETWEEN   SYSDATE-15 AND SYSDATE
+              AND A.DTYPE=1
+              GROUP BY LST.LAC,FRAGMENT_DATE 
+              ORDER BY LST.LAC,FRAGMENT_DATE
+    ) L2, 
+
+    (
+              SELECT LAC, ABONE, HR.TARIH 
+              FROM NORTHI_LOADER.LAC_MSC_HOURLY HR 
+              WHERE HR.TARIH BETWEEN   SYSDATE-28/24 AND SYSDATE
+    ) L3
+    WHERE L1.LAC=L2.LAC
+    AND L1.LAC=L3.LAC
+    AND L1.TARIH=L2.TARIH
+    AND L1.TARIH=L3.TARIH
+    )
+    GROUP BY RNC_NAME,TARIHY
+    )
+    WHERE RN=1;
+    COMMIT;
+  END SUBSCRIBER_RNC;
+  PROCEDURE SUBSCRIBER_NODEB
+  AS
+  BEGIN
+    DELETE FROM NORTHI_CUST_IBM.NODEB_ABONE_SAYILARI;
+
+    INSERT INTO NORTHI_CUST_IBM.NODEB_ABONE_SAYILARI(RNC_NAME,NODEB_NAME,ABONE_SAYISI,TARIH)
+    SELECT RNC_NAME,NODEB_NAME,DATA_TOPLAM_ABONE_SAYISI,TARIH1
+    FROM 
+    (
+    SELECT 
+    RNC_NAME,
+    NODEB_NAME,
+    ROW_NUMBER() OVER (PARTITION BY RNC_NAME,NODEB_NAME ORDER BY TARIH DESC) RN,
+    TARIH TARIH1,
+    CEIL(SUM(DATA_TOPLAM_ABONE_SAYISI)) DATA_TOPLAM_ABONE_SAYISI 
+    FROM
+    (
+        SELECT
+        L1.RNC_NAME,
+        L1.NODEB_NAME, 
+        L1.CELL_NAME,
+        L1.TARIH,
+        DECODE(L2.TOTAL_TRAF, 0,0,L1.TOTAL_TRAF/L2.TOTAL_TRAF*L3.ABONE) TOTAL_TRAF_ABONE_SAYISI,
+        DECODE(L2.DATA_TOPLAM_MB,0,0,L1.DATA_TOPLAM_MB/L2.DATA_TOPLAM_MB*L3.ABONE) DATA_TOPLAM_ABONE_SAYISI,
+        DECODE(L2.TOPLAM_ATTEMPT,0,0,L1.TOPLAM_ATTEMPT/L2.TOPLAM_ATTEMPT*ABONE) TOPLAM_ATTEMPT_ABONE_SAYISI,
+        L3.LAC,
+        ABONE
+        FROM 
+        (
+              SELECT 
+              B.RNC_NAME,
+              B.NODEB_NAME,
+              B.CELL_NAME,
+              LST.LAC LAC ,
+              FRAGMENT_DATE TARIH,
+              ROUND (SUM(TRAF_HSDPA) / (1024 * 1024), 2) TRAF_HSDPA,
+              ROUND (SUM(TRAF_HSUPA) / (1024 * 1024), 2) TRAF_HSUPA,
+              ROUND (SUM(PS_DL_DATA) / 8 / (1024 * 1024), 2) R99_PS_DL_DATA,
+              ROUND (SUM(PS_UL_DATA) / 8 / (1024 * 1024), 2) R99_PS_UL_DATA,
+              ROUND (SUM(TRAF_HSDPA+TRAF_HSUPA+PS_DL_DATA/8+PS_UL_DATA/8)  / (1024 * 1024), 2) DATA_TOPLAM_MB,
+              ROUND (SUM(VOICE_ATTEMPT), 2) VOICE_ATTEMPT,
+              ROUND (SUM(DATA_ATTEMPT), 2) DATA_ATTEMPT,
+              ROUND (SUM(VOICE_ATTEMPT+DATA_ATTEMPT), 2) TOPLAM_ATTEMPT,
+              ROUND (SUM(CS_VOICE_CALL_TRAFF), 2) CS_VOICE_CALL_TRAFFIC,
+              ROUND (SUM(CS_VIDEO_CALL_TRAFF), 2) CS_VIDEO_CALL_TRAFF,
+              ROUND (SUM(CS_VOICE_CALL_TRAFF+CS_VIDEO_CALL_TRAFF), 2) TOTAL_TRAF
+              FROM NORTHI_DATA.CELL_STATISTICS A,
+              NORTHI_DATA.LIST_RNC_NODEB_CELL B,
+              (
+                SELECT  DISTINCT NORTHI_CUST_BSS_MOZTURK.sayiyacevir(SUBSTR(LAC,3,4)) LAC, REPLACE(CELLNAME,'"','') CELL_NAME
+                FROM NORTHI_DATA.V_UCELLSETUP LL 
+                WHERE EXPORT_DATE  BETWEEN SYSDATE-15 AND SYSDATE
+              ) LST
+              WHERE A.NETWORK_ID=B.CELL_ID
+              AND LST.CELL_NAME=B.CELL_NAME
+              AND FRAGMENT_DATE BETWEEN SYSDATE-15 AND SYSDATE
+              AND A.DTYPE=1
+              GROUP BY    B.RNC_NAME, B.NODEB_NAME,B.CELL_NAME,LST.LAC,FRAGMENT_DATE
+              ORDER BY    B.RNC_NAME, B.NODEB_NAME,B.CELL_NAME,LST.LAC,FRAGMENT_DATE
+        ) L1,
+        (
+              SELECT 
+              LST.LAC LAC,
+              FRAGMENT_DATE TARIH ,
+              ROUND (SUM(TRAF_HSDPA) / (1024 * 1024), 2) TRAF_HSDPA,
+              ROUND (SUM(TRAF_HSUPA) / (1024 * 1024), 2) TRAF_HSUPA,
+              ROUND (SUM(PS_DL_DATA) / 8 / (1024 * 1024), 2) R99_PS_DL_DATA,
+              ROUND (SUM(PS_UL_DATA) / 8 / (1024 * 1024), 2) R99_PS_UL_DATA,
+              ROUND (SUM(TRAF_HSDPA+TRAF_HSUPA+PS_DL_DATA/8+PS_UL_DATA/8)  / (1024 * 1024), 2) DATA_TOPLAM_MB,
+              ROUND (SUM(VOICE_ATTEMPT), 2) VOICE_ATTEMPT,
+              ROUND (SUM(DATA_ATTEMPT), 2) DATA_ATTEMPT,
+              ROUND (SUM(VOICE_ATTEMPT+DATA_ATTEMPT), 2) TOPLAM_ATTEMPT,
+              ROUND (SUM(CS_VOICE_CALL_TRAFF), 2) CS_VOICE_CALL_TRAFFIC,
+              ROUND (SUM(CS_VIDEO_CALL_TRAFF), 2) CS_VIDEO_CALL_TRAFF,
+              ROUND (SUM(CS_VOICE_CALL_TRAFF+CS_VIDEO_CALL_TRAFF), 2) TOTAL_TRAF
+              FROM NORTHI_DATA.CELL_STATISTICS A,
+              NORTHI_DATA.LIST_RNC_NODEB_CELL B,
+              (
+                  SELECT DISTINCT NORTHI_CUST_BSS_MOZTURK.sayiyacevir(SUBSTR(LAC,3,4)) LAC, REPLACE(CELLNAME,'"','') CELL_NAME
+                  FROM NORTHI_DATA.V_UCELLSETUP LL 
+                  WHERE EXPORT_DATE   BETWEEN SYSDATE-15 AND SYSDATE
+              ) LST
+              WHERE A.NETWORK_ID=B.CELL_ID
+              AND LST.CELL_NAME=B.CELL_NAME
+              AND FRAGMENT_DATE BETWEEN SYSDATE-15 AND SYSDATE
+              AND A.DTYPE=1
+              GROUP BY LST.LAC,FRAGMENT_DATE
+              ORDER BY LST.LAC,FRAGMENT_DATE
+        ) L2, 
+        (
+             SELECT LAC, ABONE, HR.TARIH 
+             FROM NORTHI_LOADER.LAC_MSC_HOURLY HR 
+             WHERE HR.TARIH BETWEEN  SYSDATE-28/24 AND SYSDATE
+        ) L3
+        WHERE L1.LAC=L2.LAC
+        AND L1.LAC=L3.LAC
+        AND L1.TARIH=L2.TARIH
+        AND L1.TARIH=L3.TARIH
+    )
+    GROUP BY RNC_NAME,NODEB_NAME,TARIH
+    )
+    WHERE RN=1;
+    COMMIT;
+  END SUBSCRIBER_NODEB;
+  
+  PROCEDURE SUBSCRIBER_BSC
+  AS
+  BEGIN
+    DELETE FROM NORTHI_CUST_IBM.BSC_ABONE_SAYILARI;
+
+    INSERT INTO  NORTHI_CUST_IBM.BSC_ABONE_SAYILARI(BSC_NAME,TARIH,ABONE_SAYISI)
+    SELECT BSC,TARIH,BTS_ABONE_SAYISI_TRAF
+    FROM 
+    (
+        SELECT BSC, 
+        ROW_NUMBER()  OVER (PARTITION BY BSC ORDER BY TARIH DESC) RN,
+        CEIL (SUM (BTS_ABONE_SAYISI_TRAF)) BTS_ABONE_SAYISI_TRAF, TARIH
+        FROM (  SELECT L1.BSC,
+                   BTS_NAME,
+                   BTS_ID,
+                   L1.LAC,
+                   (DECODE (TOP_LAC_TRAF,
+                            0, 0,
+                            BTS_LAC_TRAF / TOP_LAC_TRAF * ABONE))
+                      BTS_ABONE_SAYISI_TRAF,
+                   (DECODE (TOP_LAC_CALL,
+                            0, 0,
+                            BTS_LAC_CALL / TOP_LAC_CALL * ABONE))
+                      BTS_ABONE_SAYISI_CALL,
+                   (DECODE (TOP_LAC_TRAF,
+                            0, 0,
+                            BTS_LAC_TRAF / TOP_LAC_TRAF * ABONE)
+                    / 2
+                    + DECODE (TOP_LAC_CALL,
+                              0, 0,
+                              BTS_LAC_CALL / TOP_LAC_CALL * ABONE)
+                      / 2)
+                      BTS_ABONE_SAYISI_ORTALAMA,
+                   ABONE,
+                   L1.PLAKA IL,
+                   L1.TARIH TARIH
+              FROM (  --BSC ve LAC bazinda toplam trafikler
+
+                      SELECT BSC,
+                             BTS_NAME,
+                             PLAKA,
+                             LAC,
+                             SUM (TRAF) BTS_LAC_TRAF,
+                             SUM (CALL) AS BTS_LAC_CALL,
+                             TARIH,
+                             BTS_ID
+                        FROM (SELECT BSC,
+                                     SUBSTR (AL.GSM_CELL_ID, 8, 5) AS LAC,
+                                     BTS_NAME,
+                                     CELL,
+                                     TCH_TRAFFIC AS TRAF,
+                                     TCH_NORMSEIZS AS CALL,
+                                     LST.CITY_CODE PLAKA,
+                                     FRAGMENT_DATE TARIH,
+                                     SUBSTR (CELL_NAME, 11, 8) BTS_ID
+                                FROM NORTHI_CUST_BSS_MOZTURK.TBL_2G_CELL_ALL AL,
+                                     (SELECT A.BTS_NAME,A.CELL_ID,A.CELL_NAME,    B.CITY_CODE 
+        FROM NORTHI_DATA.OMC_BSC_BTS_CELL_LIST A, NORTHI_DATA.CITY_SITE_CELL_LIST B
+        WHERE A.CELL_ID=B.CELL_ID)LST,
+                                     NORTHI_DATA.CELLSTS IST
+                               WHERE     AL.CELL = LST.CELL_NAME
+                                     AND IST.NETWORK_ID = LST.CELL_ID
+                                     AND IST.DTYPE = 1
+                                     AND IST.FRAGMENT_DATE BETWEEN SYSDATE-23/24 AND SYSDATE
+                                                                   )
+                    GROUP BY BSC,
+                             BTS_NAME,
+                             BTS_ID,
+                             PLAKA,
+                             LAC,
+                             TARIH
+                    ORDER BY BSC, LAC) L1,
+                   (  SELECT LAC,
+                             SUM (TRAF) TOP_LAC_TRAF,
+                             SUM (CALL) TOP_LAC_CALL,
+                             TARIH
+                        FROM (SELECT BSC,
+                                     SUBSTR (AL.GSM_CELL_ID, 8, 5) AS LAC,
+                                     CELL,
+                                     TCH_TRAFFIC AS TRAF,
+                                     TCH_NORMSEIZS AS CALL,
+                                     FRAGMENT_DATE TARIH
+                                FROM NORTHI_CUST_BSS_MOZTURK.TBL_2G_CELL_ALL AL,
+                                     NORTHI_DATA.OMC_BSC_BTS_CELL_LIST LST,
+                                     NORTHI_DATA.CELLSTS IST
+                               WHERE     AL.CELL = LST.CELL_NAME
+                                     AND IST.NETWORK_ID = LST.CELL_ID
+                                     AND IST.DTYPE = 1
+                                     AND LST.CELL_NAME IN
+                                            (SELECT DISTINCT CELL
+                                               FROM NORTHI_CUST_BSS_MOZTURK.TBL_2G_CELL_ALL GG
+                                              WHERE SUBSTR (GG.GSM_CELL_ID, 8, 5) IN
+                                                       (SELECT DISTINCT
+                                                               SUBSTR (
+                                                                  AL.GSM_CELL_ID,
+                                                                  8,
+                                                                  5)
+                                                                  AS LAC
+                                                          FROM NORTHI_CUST_BSS_MOZTURK.TBL_2G_CELL_ALL AL--where  al.BSC='BKAYM01'
+                                                       ))
+                                     AND IST.FRAGMENT_DATE BETWEEN SYSDATE-23/24 AND SYSDATE
+                                                                   + 23 / 24)
+                    GROUP BY LAC, TARIH
+                    ORDER BY LAC) L2,
+                   (SELECT LAC, ABONE, HR.TARIH
+                      FROM NORTHI_LOADER.LAC_MSC_HOURLY HR
+                     WHERE HR.TARIH BETWEEN SYSDATE-23/24 AND SYSDATE) L3
+             WHERE     L1.LAC = L2.LAC
+                   AND L1.LAC = L3.LAC
+                   AND L1.TARIH = L2.TARIH
+                   AND L1.TARIH = L3.TARIH
+          ORDER BY BSC,
+                   BTS_NAME,
+                   L1.LAC,
+                   L1.TARIH)
+        GROUP BY BSC, TARIH
+        )
+        WHERE RN=1;
+    COMMIT;
+  END SUBSCRIBER_BSC;
+  PROCEDURE SUBSCRIBER_BTS
+  AS
+  BEGIN
+    DELETE FROM NORTHI_CUST_IBM.BTS_ABONE_SAYILARI;
+
+        
+        INSERT INTO NORTHI_CUST_IBM.BTS_ABONE_SAYILARI(BSC_NAME,BTS_NAME,TARIH,ABONE_SAYISI)
+        SELECT BSC,BTS_NAME,TARIH,bts_abone_sayisi_traf
+        FROM 
+        (
+        select ww.BSC,
+        ROW_NUMBER() OVER (PARTITION BY ww.BSC,ww.BTS_NAME ORDER BY ww.TARIH) RN,
+        ww.BTS_NAME,
+        ww.TARIH,
+        ww.bts_abone_sayisi_traf
+        from
+        (
+        select 
+        l1.bsc,
+        bts_name,
+        bts_id, 
+        l1.lac,
+        ceil(decode(top_lac_traf,0,0,bts_lac_traf/top_lac_traf*abone)) bts_abone_sayisi_traf,
+         abone, 
+         l1.plaka plaka, L1.TARIH tarih from 
+        (
+        select bsc,bts_name,plaka, lac, sum(traf)bts_lac_traf, sum(call) as bts_lac_call, tarih, bts_id from
+        (
+        select bsc, substr(al.GSM_CELL_ID,8,5) as lac, bts_name, cell, tch_traffic as traf,TCH_NORMSEIZS as call, 
+        lst.CITY_CODE plaka, 
+        fragment_date tarih, substr(cell_name,11,8) bts_id from  northi_cust_bss_mozturk.TBL_2G_CELL_ALL al, (SELECT A.BTS_NAME,A.CELL_ID,A.CELL_NAME,    B.CITY_CODE 
+        FROM NORTHI_DATA.OMC_BSC_BTS_CELL_LIST A, NORTHI_DATA.CITY_SITE_CELL_LIST B
+        WHERE A.CELL_ID=B.CELL_ID) lst, NORTHI_DATA.CELLSTS ist
+        where al.cell=lst.CELL_NAME
+        and ist.network_id=lst.cell_id
+        and ist.dtype=1
+        and ist.fragment_date between SYSDATE-23/24 AND SYSDATE
+        )
+        group by bsc, bts_name,bts_id, plaka, lac, tarih
+        order by bsc, lac
+        ) l1,
+        (
+        select lac, sum(traf) top_lac_traf, sum(call) top_lac_call, tarih from
+        (
+        select bsc, substr(al.GSM_CELL_ID,8,5) as lac, cell, tch_traffic as traf, TCH_NORMSEIZS as call, fragment_date tarih from  northi_cust_bss_mozturk.TBL_2G_CELL_ALL al, NORTHI_DATA.OMC_BSC_BTS_CELL_LIST lst, NORTHI_DATA.CELLSTS ist
+        where al.cell=lst.CELL_NAME
+        and ist.network_id=lst.cell_id
+        and ist.dtype=1
+        and lst.CELL_NAME in (select distinct cell from northi_cust_bss_mozturk.TBL_2G_CELL_ALL gg
+        where substr(gg.GSM_CELL_ID,8,5) in (select distinct substr(al.GSM_CELL_ID,8,5) as lac from northi_cust_bss_mozturk.TBL_2G_CELL_ALL al 
+        ))
+        and ist.fragment_date between SYSDATE-15/24 AND SYSDATE
+        )
+        group by  lac, tarih
+        order by  lac
+        ) l2, 
+        (
+        select lac, abone, hr.tarih from NORTHI_LOADER.LAC_MSC_HOURLY hr 
+        where hr.TARIH between  SYSDATE-15/24 AND SYSDATE 
+        ) l3
+        where l1.lac=l2.lac
+        and l1.lac=l3.lac
+        and l1.tarih=l2.tarih
+        and l1.tarih=l3.tarih
+        order by bsc,bts_name, l1.lac, l1.tarih
+        ) ww,
+        NORTHI_CUST_IBM.BTS_LOKASYON_BILGISI lb
+        where ww.bts_name=lb.sitename(+)
+        )
+        WHERE RN=1;
+        
+        COMMIT;
+        
+        --BTS ABONE SAYILARI SITE ID BILGISINI GUNCELLER
+        UPDATE NORTHI_CUST_IBM.BTS_ABONE_SAYILARI A
+           SET SITE_ID =
+                  (SELECT MAX (SUBSTR (CELL_NAME, 11, 8))
+                     FROM NORTHI_DATA.OMC_BSC_BTS_CELL_LIST B
+                    WHERE UPPER (A.BTS_NAME) = UPPER (B.BTS_NAME))
+           WHERE TARIH BETWEEN SYSDATE-23/24 AND SYSDATE;
+        commit;
+   
+  END;
+  PROCEDURE IBM_UPDATE_TABLES
+  AS
+  BEGIN
+            /* Formatted on 25/03/2011 08:09:35 (QP5 v5.163.1008.3004) */
+        --IL BSC SAYISI TABLOSUNU GUNCELLER
+        
+        
+        INSERT INTO NORTHI_CUST_IBM.IL_BSC_SAYISI (BSC, PN)
+        SELECT DISTINCT BSC_NAME, PN 
+        FROM NORTHI_CUST_IBM.BSC_LOKASYON_BILGISI
+        WHERE (BSC_NAME,PN) NOT IN
+        (
+            SELECT BSC,PN 
+            FROM NORTHI_CUST_IBM.IL_BSC_SAYISI
+        );
+
+        COMMIT;
+
+        UPDATE NORTHI_CUST_IBM.IL_BSC_SAYISI A
+           SET IL_BSC_SAYISI =
+                  (SELECT COUNT (*)
+                     FROM NORTHI_CUST_IBM.IL_BSC_SAYISI B
+                    WHERE B.PN = A.PN);
+
+        --IL RNC SAYISI TABLOSUNU GUNCELLER
+
+        INSERT INTO NORTHI_CUST_IBM.IL_RNC_SAYISI (RNC, PN)
+           SELECT DISTINCT RNC_NAME, PN 
+           FROM NORTHI_CUST_IBM.RNC_LOKASYON_BILGISI
+           WHERE (RNC_NAME,PN) NOT IN
+           (
+                SELECT RNC_NAME,PN 
+                FROM NORTHI_CUST_IBM.IL_RNC_SAYISI
+           );
+           
+        COMMIT;
+
+        UPDATE NORTHI_CUST_IBM.IL_RNC_SAYISI A
+           SET IL_RNC_SAYISI =
+                  (SELECT COUNT (*)
+                     FROM NORTHI_CUST_IBM.IL_RNC_SAYISI B
+                    WHERE B.PN = A.PN);
+
+        COMMIT;
+
+        --NODEB LOKASYON BILGISINI GUNCELLER
+
+        INSERT INTO NORTHI_CUST_IBM.NODEB_LOKASYON_BILGISI(NODEB_ID, NAME, SITENAME, TYPE, PN, DN, BOLGE)
+        SELECT NODEB_ID, NAME, SITENAME, TYPE, PN, DN, BOLGE
+        FROM NORTHI_CUST_IBM.NODEB_LOKASYON_BILGISI_TMP
+        WHERE  (NODEB_ID) NOT IN
+        (
+            SELECT NODEB_ID
+            FROM NORTHI_CUST_IBM.NODEB_LOKASYON_BILGISI
+        );
+        
+        COMMIT;
+        
+        UPDATE NORTHI_CUST_IBM.NODEB_LOKASYON_BILGISI A
+        SET TYPE=(SELECT TYPE FROM NORTHI_CUST_IBM.NODEB_LOKASYON_BILGISI B WHERE A.NODEB_ID=B.NODEB_ID),
+        PN=(SELECT PN FROM NORTHI_CUST_IBM.NODEB_LOKASYON_BILGISI B WHERE A.NODEB_ID=B.NODEB_ID),
+        DN=(SELECT DN FROM NORTHI_CUST_IBM.NODEB_LOKASYON_BILGISI B WHERE A.NODEB_ID=B.NODEB_ID);
+        
+        COMMIT;
+        
+        UPDATE NORTHI_CUST_IBM.NODEB_LOKASYON_BILGISI A
+           SET IL_NODEB_SAYISI =
+                  (SELECT COUNT (*)
+                     FROM NORTHI_CUST_IBM.NODEB_LOKASYON_BILGISI B
+                    WHERE A.PN = B.PN);
+
+        COMMIT;
+
+        UPDATE NORTHI_CUST_IBM.NODEB_LOKASYON_BILGISI A
+           SET ILCE_NODEB_SAYISI =
+                  (SELECT COUNT (*)
+                     FROM NORTHI_CUST_IBM.NODEB_LOKASYON_BILGISI B
+                    WHERE A.PN = B.PN AND A.DN = B.DN);
+
+        COMMIT;
+
+        --BTS LOKASYON BILGISINI GUNCELLER IL BTS SAYISINI HESAPLAR
+
+        INSERT INTO NORTHI_CUST_IBM.BTS_LOKASYON_BILGISI(BTS_ID, NAME, SITENAME, TYPE, PN, DN, BOLGE)
+        SELECT BTS_ID, NAME, SITENAME, TYPE, PN, DN, BOLGE
+        FROM NORTHI_CUST_IBM.BTS_LOKASYON_BILGISI_TMP
+        WHERE  (BTS_ID) NOT IN
+        (
+            SELECT BTS_ID
+            FROM NORTHI_CUST_IBM.BTS_LOKASYON_BILGISI
+        );
+        
+        COMMIT;
+        
+        UPDATE NORTHI_CUST_IBM.BTS_LOKASYON_BILGISI A
+        SET TYPE=(SELECT TYPE FROM NORTHI_CUST_IBM.BTS_LOKASYON_BILGISI B WHERE A.BTS_ID=B.BTS_ID),
+        PN=(SELECT PN FROM NORTHI_CUST_IBM.BTS_LOKASYON_BILGISI B WHERE A.BTS_ID=B.BTS_ID),
+        DN=(SELECT DN FROM NORTHI_CUST_IBM.BTS_LOKASYON_BILGISI B WHERE A.BTS_ID=B.BTS_ID);
+        
+        COMMIT;
+
+        UPDATE NORTHI_CUST_IBM.BTS_LOKASYON_BILGISI A
+           SET IL_BTS_SAYISI =
+                  (SELECT COUNT (*)
+                     FROM NORTHI_CUST_IBM.BTS_LOKASYON_BILGISI B
+                    WHERE A.PN = B.PN);
+
+        COMMIT;
+         --BTS LOKASYON BILGISINI GUNCELLER ILCE BTS SAYISINI HESAPLAR
+        UPDATE NORTHI_CUST_IBM.BTS_LOKASYON_BILGISI A
+           SET ILCE_BTS_SAYISI =
+                  (SELECT COUNT (*)
+                     FROM NORTHI_CUST_IBM.BTS_LOKASYON_BILGISI B
+                    WHERE A.PN = B.PN AND A.DN = B.DN);
+
+        COMMIT;
+        --BTS LOKASYON BILGISINI GUNCELLER SITE ID GUNCELLER
+        UPDATE NORTHI_CUST_IBM.BTS_LOKASYON_BILGISI A
+           SET SITE_ID =
+                  (SELECT MAX (SUBSTR (CELL_NAME, 11, 8))
+                     FROM NORTHI_DATA.OMC_BSC_BTS_CELL_LIST B
+                    WHERE UPPER (A.SITENAME) = UPPER (B.BTS_NAME));
+        commit;
+  END;
+
+PROCEDURE INSERT_WEEKLY_CELL_ALIVE_ULK4G
+AS
+BEGIN
+   DELETE FROM NORTHI_CUST_ATOL.WEEKLY_CELL_ALIVE_4G
+         WHERE VENDOR = 7;
+
+   INSERT /*+ append noparallel */
+         INTO  NORTHI_CUST_ATOL.WEEKLY_CELL_ALIVE_4G (ENODEBID,
+                                                      DATA_DATE,
+                                                      SITE_ID,
+                                                      VENDOR,
+                                                      CELL,
+                                                      CELL_ID)
+      WITH OBJ_HW4G
+           AS (SELECT 
+                      DISTINCT NE_NAME,
+                               NE_ID,
+                               PARENT_ID,
+                               TOP_PARENT_ID,
+                               NE_TYPE
+                 FROM NORTHI_PARSER.OBJECTS_ULAK4G_DAILY
+                WHERE DATA_DATE = TRUNC (SYSDATE))
+      SELECT T1.ENODEBID,
+             T2.DATA_DATE,
+             SITE_ID,
+             7 VENDOR,
+             CELL,
+             CELL_ID
+        FROM (SELECT DISTINCT ENODEBID, NETWORK_ID
+                FROM HIZIR2.ULAK4G_CELL_1
+               WHERE DATA_DATE BETWEEN TRUNC (SYSDATE) - 1
+                                   AND TRUNC (SYSDATE - 1) + 23.5 / 24) T1,
+             (SELECT TRUNC (SYSDATE) - 1 DATA_DATE,
+                     NE_ID NETWORK_ID,
+                     TOP_PARENT_ID ENODEBID,
+                     NE_NAME CELL,
+                     SUBSTR (NE_NAME, 2, 5) SITE_ID,
+                     SUBSTR (NE_NAME, 12, 7) CELL_ID
+                FROM OBJ_HW4G B
+               WHERE NE_TYPE = 37) T2
+       WHERE T1.ENODEBID = T2.ENODEBID AND T1.NETWORK_ID = T2.NETWORK_ID;
+
+   COMMIT;
+END;
+
+
+PROCEDURE INSERT_WEEKLY_CELL_ALIVE_4G
+AS
+BEGIN
+   DELETE FROM NORTHI_CUST_ATOL.WEEKLY_CELL_ALIVE_4G
+         WHERE VENDOR = 6;
+
+   INSERT /*+ append noparallel */
+         INTO  NORTHI_CUST_ATOL.WEEKLY_CELL_ALIVE_4G (ENODEBID,
+                                                      DATA_DATE,
+                                                      SITE_ID,
+                                                      VENDOR,
+                                                      CELL,
+                                                      CELL_ID)
+      WITH OBJ_HW4G
+           AS (SELECT 
+                      DISTINCT NE_NAME,
+                               NE_ID,
+                               PARENT_ID,
+                               TOP_PARENT_ID,
+                               NE_TYPE
+                 FROM NORTHI_PARSER.OBJECTS_HW4G
+                WHERE DATA_DATE = TRUNC (SYSDATE))
+      SELECT T1.ENODEBID,
+             T2.DATA_DATE,
+             SITE_ID,
+             6 VENDOR,
+             CELL,
+             CELL_ID
+        FROM (SELECT DISTINCT ENODEBID, NETWORK_ID
+                FROM HIZIR2.HW4G_E_RAB_SETUP_MEAS
+               WHERE C1526727545 > 0 AND DATA_DATE BETWEEN TRUNC (SYSDATE) - 1
+                                   AND TRUNC (SYSDATE - 1) + 23.5 / 24) T1,
+             (SELECT TRUNC (SYSDATE) - 1 DATA_DATE,
+                     NE_ID NETWORK_ID,
+                     TOP_PARENT_ID ENODEBID,
+                     NE_NAME CELL,
+                     SUBSTR (NE_NAME, 2, 5) SITE_ID,
+                     SUBSTR (NE_NAME, 12, 7) CELL_ID
+                FROM OBJ_HW4G B
+               WHERE NE_TYPE = 37) T2
+       WHERE T1.ENODEBID = T2.ENODEBID AND T1.NETWORK_ID = T2.NETWORK_ID;
+
+   COMMIT;
+END;
+
+  PROCEDURE INSERT_WEEKLY_CELL_ALIVE_3G
+  AS
+  BEGIN
+      DELETE FROM NORTHI_CUST_ATOL.WEEKLY_CELL_ALIVE_3G
+      WHERE VENDOR=4;
+      
+      
+      INSERT                          /*+ append noparallel */
+INTO    NORTHI_CUST_ATOL.WEEKLY_CELL_ALIVE_3G (DATA_DATE,
+                                               RNC,
+                                               NODEB,
+                                               CELL,
+                                               SITE_ID,
+                                               VENDOR,
+                                               CELL_ID,
+                                               SAC)
+WITH OBJ_HW3G AS
+(
+ SELECT DISTINCT NE_NAME,
+                NE_ID,
+                PARENT_ID,
+                TOP_PARENT_ID,
+                NE_TYPE
+   FROM M2000.OBJECTS_HW3G
+  WHERE DATA_DATE = TRUNC (SYSDATE)--186,055
+--    AND NE_TYPE = 37
+),
+PARENT_N AS
+(
+    SELECT G1.*, G2.NE_NAME AS PARENT_NE_NAME
+      FROM OBJ_HW3G G1, OBJ_HW3G G2
+     WHERE G1.PARENT_ID = G2.NE_ID
+),
+TOP_PARENT_N AS
+(
+    SELECT G1.*, G2.NE_NAME AS TOP_PARENT_NE_NAME
+      FROM PARENT_N G1, PARENT_N G2
+     WHERE G1.TOP_PARENT_ID = G2.NE_ID
+)
+--SELECT * FROM PARENT_N;
+,
+SAC_LIST AS
+(
+    SELECT SAC, CELLNAME
+      FROM
+      (
+        SELECT DECODE (
+                    SUBSTR (OMC_CELLNAME, 8, 1),
+                    '4',
+                    CELL.SAC,
+                    --SUBSTR (CELL.TX_ID, -5)
+                    REPLACE(SUBSTR (CELL.TX_ID, -5),CHR(13)||CHR(10),'')
+                    )
+               SAC,
+               OMC_CELLNAME CELLNAME,
+               ROW_NUMBER()OVER(PARTITION BY OMC_CELLNAME ORDER BY OMC_CELLNAME) RN
+          FROM NORTHI_DATA.ATOLL_DESIGN_NORTHI CELL
+      )
+     WHERE RN = 1
+),
+WHOLE_LIST AS
+(
+    SELECT DISTINCT TT.*,SAC
+      FROM TOP_PARENT_N TT, SAC_LIST S
+     WHERE S.CELLNAME(+) = TT.NE_NAME
+),
+M2 AS
+(
+    SELECT DISTINCT RNCID, NETWORK_ID
+      FROM HIZIR2.M2_HSDPA_PER_CELL
+     WHERE C67190704 > 0 AND DATA_DATE BETWEEN TRUNC (SYSDATE) - 1 AND TRUNC (SYSDATE - 1) + 23.5 / 24
+)
+SELECT DATE_DATE,RNC,NODEB,CELL,SITE_ID,VENDOR,CELL_ID,SAC FROM (
+SELECT /*+ PARALLEL(4) */TRUNC(SYSDATE-1) AS DATE_DATE,
+       TOP_PARENT_NE_NAME AS RNC,
+       PARENT_NE_NAME AS NODEB,
+       NE_NAME AS CELL,
+       SUBSTR(PARENT_NE_NAME, INSTR(PARENT_NE_NAME, '_', 1, 2)+1, INSTR(PARENT_NE_NAME, '_', 1, 3)-INSTR(PARENT_NE_NAME, '_', 1, 2)-1) SITE_ID,
+       4 VENDOR,
+       SUBSTR (NE_NAME, 15, 5) CELL_ID,
+       SAC
+  FROM WHOLE_LIST W, M2 M
+ WHERE W.TOP_PARENT_ID = M.RNCID
+   AND W.NE_ID = M.NETWORK_ID
+   )WHERE LENGTH(SITE_ID)<9; /* 02.01.2022 --- 8 KARAKTERDEN UZUN GELEN SITE_IDLER OLDUGUNDAN EKLENMISTIR   */
+      commit;    
+      
+      /*
+      INSERT /*+ append */  /* INTO NORTHI_CUST_ATOL.WEEKLY_CELL_ALIVE_3G(DATA_DATE,RNC,NODEB,CELL,SITE_ID,VENDOR,CELL_ID,SAC)
+        SELECT   B.DATA_DATE,RNC,NODEB,CELL,SITE_ID,4 VENDOR,CELL_ID,SAC
+        FROM
+        (
+            SELECT DISTINCT RNCID, NETWORK_ID FROM HIZIR2.M2_RRC_CONN_PER_CELL A WHERE DATA_DATE BETWEEN TRUNC(SYSDATE)-1 AND TRUNC(SYSDATE-1)+23.5/24
+        ) A, 
+        (
+            SELECT
+                TRUNC(SYSDATE)-1 DATA_DATE, 
+                NE_ID NETWORK_ID,
+                TOP_PARENT_ID RNCID,
+                (SELECT NE_NAME FROM M2000.OBJECTS_HW3G  A WHERE DATA_DATE=TRUNC(SYSDATE) AND A.NE_ID=B.TOP_PARENT_ID AND ROWNUM=1) RNC,
+                (SELECT NE_NAME FROM M2000.OBJECTS_HW3G  A WHERE DATA_DATE=TRUNC(SYSDATE) AND A.NE_ID=B.PARENT_ID AND ROWNUM=1) NODEB,
+                (SELECT  /*+ index(v,IV_UCELLSETUP) */ /* SAC FROM NORTHI_DATA.V_UCELLSETUP V WHERE EXPORT_DATE=TRUNC(SYSDATE) AND V.CELLNAME=B.NE_NAME AND ROWNUM=1) SAC,
+                NE_NAME CELL,
+                SUBSTR(NE_NAME,11,8) SITE_ID,
+                SUBSTR(NE_NAME,15,5) CELL_ID
+            FROM M2000.OBJECTS_HW3G B
+            WHERE DATA_DATE=TRUNC(SYSDATE)
+            AND NE_TYPE=37
+        )    B
+        WHERE
+        A.RNCID=B.RNCID AND 
+         A.NETWORK_ID=B.NETWORK_ID;
+         COMMIT;
+         */
+         
+  END;
+  
+  PROCEDURE INSERT_WEEKLY_CELL_ALIVE_2G_SR
+  AS
+  BEGIN
+      UPDATE NORTHI_CUST_ATOL.WEEKLY_CELL_ALIVE_2G SET DATA_DATE=TRUNC(SYSDATE)-1 WHERE VENDOR=1;
+     
+      
+      DELETE FROM NORTHI_CUST_ATOL.WEEKLY_CELL_ALIVE_2G
+      WHERE VENDOR=5;
+      
+      
+      INSERT /*+ append */  INTO NORTHI_CUST_ATOL.WEEKLY_CELL_ALIVE_2G(DATA_DATE,BSC,BTS,CELL,SITE_ID,VENDOR,CELL_ID)
+        SELECT   B.DATA_DATE,BSC,BTS,CELL,SITE_ID,5 VENDOR,CELL_ID
+        FROM
+        (SELECT DISTINCT NETWORK_ID FROM HIZIR2.SR_IMMEDIATE_ASSIGN_PER_CELL A WHERE C1278075461>0 AND  A.DATA_DATE BETWEEN TRUNC(SYSDATE-1) AND TRUNC(SYSDATE-1)+23.5/24) A, 
+        (
+        SELECT
+                TRUNC(SYSDATE)-1 DATA_DATE, 
+                NE_ID NETWORK_ID,
+                (SELECT NE_NAME FROM NORTHI_PARSER.OBJECTS_HW2G  A WHERE DATA_DATE=TRUNC(SYSDATE) AND A.NE_ID=B.TOP_PARENT_ID AND ROWNUM=1) BSC,
+                (SELECT NE_NAME FROM NORTHI_PARSER.OBJECTS_HW2G  A WHERE DATA_DATE=TRUNC(SYSDATE) AND A.NE_ID=B.PARENT_ID AND ROWNUM=1) BTS,
+                NE_NAME CELL,
+                SUBSTR(NE_NAME,11,8) SITE_ID,
+                SUBSTR(NE_NAME,15,5) CELL_ID
+            FROM NORTHI_PARSER.OBJECTS_HW2G B
+            WHERE DATA_DATE=TRUNC(SYSDATE)
+            AND NE_TYPE=37
+        )    B
+        WHERE A.NETWORK_ID=B.NETWORK_ID;
+        COMMIT;
+  END;
+  
+  PROCEDURE INSERT_WEEKLY_CELL_ALIVE_2G_MT
+  AS
+  BEGIN
+      UPDATE NORTHI_CUST_ATOL.WEEKLY_CELL_ALIVE_2G SET DATA_DATE=TRUNC(SYSDATE)-1 WHERE VENDOR=5;
+    
+      
+      DELETE FROM NORTHI_CUST_ATOL.WEEKLY_CELL_ALIVE_2G
+      WHERE VENDOR=1;
+      
+      
+      
+      INSERT INTO NORTHI_CUST_ATOL.WEEKLY_CELL_ALIVE_2G(DATA_DATE,BSC,BTS,CELL,SITE_ID,VENDOR,CELL_ID)
+      
+      WITH OBJ AS ( SELECT /*+ MATERIALIZE */  DISTINCT NETWORK_ID,PARENT_ID, NAME  FROM NORTHI_DATA.OBJECTS B
+            WHERE STATE=0
+            AND OBJECT_CLASS_ID=37
+ 
+                  )
+      SELECT   B.DATA_DATE,BSC,BTS,CELL,SITE_ID,1 VENDOR,CELL_ID
+        FROM
+        (SELECT DISTINCT NETWORK_ID FROM HIZIR2.CELL_STATISTICS_1 WHERE  ACCESS_PER_RACH>0 AND FRAGMENT_DATE BETWEEN TRUNC(SYSDATE) AND TRUNC(SYSDATE)+23/24) A, 
+        (
+        SELECT /* PARALLEL(4) */
+                TRUNC(SYSDATE)-1 DATA_DATE, 
+                NETWORK_ID NETWORK_ID,
+                (SELECT (SELECT NAME FROM NORTHI_DATA.OBJECTS X WHERE A.PARENT_ID=X.NETWORK_ID AND ROWNUM=1) NAME FROM NORTHI_DATA.OBJECTS  A WHERE A.NETWORK_ID=B.PARENT_ID AND ROWNUM=1) BSC,
+                (SELECT NAME FROM NORTHI_DATA.OBJECTS  A WHERE A.NETWORK_ID=B.PARENT_ID AND ROWNUM=1) BTS,
+                NAME CELL,
+                SUBSTR(NAME,11,8) SITE_ID,
+                SUBSTR(NAME,15,5) CELL_ID
+            FROM OBJ B
+        )    B
+        WHERE A.NETWORK_ID=B.NETWORK_ID;
+        COMMIT;
+  END;
+ /*   PROCEDURE INSERT_WEEKLY_CELL_ALIVE_2G_NS
+  AS
+  BEGIN
+      UPDATE NORTHI_CUST_ATOL.WEEKLY_CELL_ALIVE_2G SET DATA_DATE=TRUNC(SYSDATE)-1 WHERE VENDOR=14;
+      COMMIT;
+ 
+      
+      DELETE FROM NORTHI_CUST_ATOL.WEEKLY_CELL_ALIVE_2G
+      WHERE VENDOR=14;
+      
+      INSERT INTO NORTHI_CUST_ATOL.WEEKLY_CELL_ALIVE_2G(DATA_DATE,BSC,BTS,CELL,SITE_ID,VENDOR,CELL_ID)
+        SELECT   B.DATA_DATE,BSC,BTS,CELL,SITE_ID,14 VENDOR,CELL_ID
+        FROM
+        (SELECT DISTINCT NETWORK_ID FROM NORTHI_PARSER.NSN_RESOURCE_AVAIL_MEAS_C WHERE  (AVE_FTCH_HOLD_TIM/360000)>0 AND FRAGMENT_DATE BETWEEN TRUNC(SYSDATE) AND TRUNC(SYSDATE)+23/24) A, 
+        (
+        SELECT
+                TRUNC(SYSDATE)-1 DATA_DATE, 
+                NETWORK_ID NETWORK_ID,
+                (SELECT (SELECT NAME FROM NORTHI_DATA.OBJECTS X WHERE A.PARENT_ID=X.NETWORK_ID AND ROWNUM=1) NAME FROM NORTHI_DATA.OBJECTS  A WHERE A.NETWORK_ID=B.PARENT_ID AND ROWNUM=1) BSC,
+                (SELECT NAME FROM NORTHI_DATA.OBJECTS  A WHERE A.NETWORK_ID=B.PARENT_ID AND ROWNUM=1) BTS,
+                NAME CELL,
+                '1'||REPLACE(SUBSTR(NAME,8,7),'X','-') SITE_ID,
+                SUBSTR(NAME,11,5) CELL_ID
+            FROM NORTHI_DATA.OBJECTS B
+            WHERE STATE=0
+            AND OBJECT_CLASS_ID=37
+            AND VENDOR_NAME='Nokia Siemens'
+        )    B
+        WHERE A.NETWORK_ID=B.NETWORK_ID;
+        COMMIT;
+  END;*/
+  PROCEDURE P_WORST_CELLS_2G (XDATA_DATE DATE)AS 
+  BEGIN
+        DELETE FROM NORTHI_DATA.WORST_CELLS_2G 
+        WHERE FRAGMENT_DATE<TRUNC(SYSDATE)-31; 
+        COMMIT;
+        
+        
+        DELETE FROM NORTHI_DATA.WORST_CELLS_2G 
+        WHERE FRAGMENT_DATE BETWEEN XDATA_DATE AND XDATA_DATE+23/24;
+        COMMIT;
+        
+        INSERT INTO NORTHI_DATA.WORST_CELLS_2G  
+        SELECT X.*,1 TYPE FROM
+        (SELECT SUB_REGION, BSC_NAME, BTS_NAME, CELL_NAME, FRAGMENT_DATE,
+        ROW_NUMBER() OVER(PARTITION BY SUB_REGION ORDER BY MAIN_RESULT DESC) NETWORK_RANK,
+        ROW_NUMBER() OVER(PARTITION BY SUB_REGION ORDER BY MAIN_RESULT DESC) SUB_REGION_RANK, 
+        ROW_NUMBER() OVER(PARTITION BY BSC_NAME ORDER BY MAIN_RESULT DESC) BSC_RANK, 
+        MAIN_RESULT, ACCESSIBILITY, RETAINABILITY, MOBILITY,
+        HM_TOTAL_CALLS,HM_SDCCH_TRAFFIC,HM_TCHTRAFFIC,HM_TCHTRAFFIC_HR,AVAIL_SDCCH_MEAN,HM_AVAIL_TCH_MEAN,HM_SD_CONG_RATE,HM_TCH_CONG_RATE,HM_CSSR,HM_CSSR_VF,HM_SDRFLOSS,HM_DCR,HM_DROP_PER_ERLANG,HM_HOSUC_RATE,   
+        CSSR_FAILURES_C,HM_SD_CONG_COUNT_C,HM_TCH_CONG_COUNT_C,DROPPED_CALL_FAILS_SDCCH_C,DCR_NUMM_C,HANDOVER_FAILS_C,INC_HO_FAILS_C,
+        CSSR_FAILURES_B,HM_SD_CONG_COUNT_B,HM_TCH_CONG_COUNT_B,DROPPED_CALL_FAILS_SDCCH_B,DCR_NUMM_B,HANDOVER_FAILS_B,INC_HO_FAILS_B,
+        CSSR_FAILURES,HM_SD_CONG_COUNT,HM_TCH_CONG_COUNT,DROPPED_CALL_FAILS_SDCCH,DCR_NUMM,HANDOVER_FAILS,INC_HO_FAILS,
+        HM_HOFAIL_RATE,HM_INC_HO_SUC_RATE,HM_SDCCHACC,HM_BUSY_TCH_MAX,HM_TOT_2G_DATA_TRAFF_KB,HM_PS_ASS_FAIL 
+        FROM
+        (
+        SELECT TB.SUB_REGION,TB.BSC_NAME, TB.BTS_NAME, TB.CELL_NAME, TRUNC(XDATA_DATE) FRAGMENT_DATE,
+        ROUND(0.3* ACCESSIBILITY + 0.5*RETAINABILITY + 0.2*MOBILITY,2) MAIN_RESULT,
+        ROUND(TB.ACCESSIBILITY,2) ACCESSIBILITY,
+        ROUND(TB.RETAINABILITY,2) RETAINABILITY,
+        ROUND(TB.MOBILITY,2) MOBILITY,
+        ROUND(TB.HM_TOTAL_CALLS,2) HM_TOTAL_CALLS,
+        ROUND(TB.HM_SDCCH_TRAFFIC,2) HM_SDCCH_TRAFFIC,
+        ROUND(TB.HM_TCHTRAFFIC,2) HM_TCHTRAFFIC,
+        ROUND(TB.HM_TCHTRAFFIC_HR,2) HM_TCHTRAFFIC_HR,
+        ROUND(TB.AVAIL_SDCCH_MEAN,2) AVAIL_SDCCH_MEAN,
+        ROUND(TB.HM_AVAIL_TCH_MEAN,2) HM_AVAIL_TCH_MEAN,
+        ROUND(TB.HM_SD_CONG_RATE,2) HM_SD_CONG_RATE,
+        ROUND(TB.HM_TCH_CONG_RATE,2) HM_TCH_CONG_RATE,
+        ROUND(TB.HM_CSSR,2) HM_CSSR,
+        ROUND(TB.HM_CSSR_VF,2) HM_CSSR_VF,
+        ROUND(TB.HM_SDRFLOSS,2) HM_SDRFLOSS,
+        ROUND(TB.HM_DCR,2) HM_DCR,
+        ROUND(TB.HM_DROP_PER_ERLANG,2) HM_DROP_PER_ERLANG,
+        ROUND(TB.HM_HOSUC_RATE,2) HM_HOSUC_RATE,   
+        ROUND(TB.CSSR_FAILURES_C,2) CSSR_FAILURES_C,
+        ROUND(TB.HM_SD_CONG_COUNT_C,2) HM_SD_CONG_COUNT_C,
+        ROUND(TB.HM_TCH_CONG_COUNT_C) HM_TCH_CONG_COUNT_C,
+        ROUND(TB.DROPPED_CALL_FAILS_SDCCH_C,2) DROPPED_CALL_FAILS_SDCCH_C,
+        ROUND(TB.DCR_NUMM_C,2) DCR_NUMM_C,
+        ROUND(TB.HANDOVER_FAILS_C,2) HANDOVER_FAILS_C,
+        ROUND(TB.INC_HO_FAILS_C,2) INC_HO_FAILS_C,
+        ROUND(TB.CSSR_FAILURES_B,2) CSSR_FAILURES_B,
+        ROUND(TB.HM_SD_CONG_COUNT_B,2) HM_SD_CONG_COUNT_B,
+        ROUND(TB.HM_TCH_CONG_COUNT_B,2) HM_TCH_CONG_COUNT_B,
+        ROUND(TB.DROPPED_CALL_FAILS_SDCCH_B,2) DROPPED_CALL_FAILS_SDCCH_B,
+        ROUND(TB.DCR_NUMM_B,2) DCR_NUMM_B,
+        ROUND(TB.HANDOVER_FAILS_B,2) HANDOVER_FAILS_B,
+        ROUND(TB.INC_HO_FAILS_B,2) INC_HO_FAILS_B,
+        ROUND(TB.CSSR_FAILURES,2) CSSR_FAILURES,
+        ROUND(TB.HM_SD_CONG_COUNT,2) HM_SD_CONG_COUNT,
+        ROUND(TB.HM_TCH_CONG_COUNT,2) HM_TCH_CONG_COUNT,
+        ROUND(TB.DROPPED_CALL_FAILS_SDCCH,2) DROPPED_CALL_FAILS_SDCCH,
+        ROUND(TB.DCR_NUMM,2) DCR_NUMM,
+        ROUND(TB.HANDOVER_FAILS,2) HANDOVER_FAILS,
+        ROUND(TB.INC_HO_FAILS,2) INC_HO_FAILS,
+        ROUND(TB.HM_HOFAIL_RATE,2) HM_HOFAIL_RATE,
+        ROUND(TB.HM_INC_HO_SUC_RATE,2) HM_INC_HO_SUC_RATE,
+        ROUND(TB.HM_SDCCHACC,2) HM_SDCCHACC,
+        ROUND(TB.HM_BUSY_TCH_MAX,2) HM_BUSY_TCH_MAX,
+        ROUND(TB.HM_TOT_2G_DATA_TRAFF_KB,2) HM_TOT_2G_DATA_TRAFF_KB,
+        ROUND(TB.HM_PS_ASS_FAIL,2) HM_PS_ASS_FAIL   
+        FROM
+        (
+        SELECT TA.*, 0.0625*GREATEST(0,CSSR_FAILURES) + 0.375*GREATEST(0,HM_SD_CONG_COUNT) + 0.375*GREATEST(0,HM_TCH_CONG_COUNT) + 0.1875*GREATEST(0,DROPPED_CALL_FAILS_SDCCH) ACCESSIBILITY, 
+        GREATEST(0,DCR_NUMM) RETAINABILITY,
+        0.5* GREATEST(0,HANDOVER_FAILS) + 0.5*GREATEST(0,INC_HO_FAILS) MOBILITY
+            FROM
+            (
+                SELECT
+                 T1.SUB_REGION,
+                 T1.BSC_NAME,
+                 T1.BTS_NAME,
+                 T1.CELL_NAME,
+                 T1.HM_TOTAL_CALLS,
+                 T1.HM_SDCCH_TRAFFIC,
+                 T1.HM_TCHTRAFFIC,
+                 T1.HM_TCHTRAFFIC_HR,
+                 T1.AVAIL_SDCCH_MEAN,
+                 T1.HM_AVAIL_TCH_MEAN,
+                 T1.HM_SD_CONG_RATE,
+                 T1.HM_TCH_CONG_RATE,
+                 T1.HM_CSSR,
+                 T1.HM_CSSR_VF,
+                 T1.HM_SDRFLOSS,
+                 T1.HM_DCR,
+                 T1.HM_DROP_PER_ERLANG,
+                 T1.HM_HOSUC_RATE, 
+                 ROUND(T1.CSSR_FAILURES,2) CSSR_FAILURES_C, 
+                 ROUND(T1.HM_SD_CONG_COUNT,2) HM_SD_CONG_COUNT_C,
+                 ROUND(T1.HM_TCH_CONG_COUNT,2) HM_TCH_CONG_COUNT_C,
+                 ROUND(T1.DROPPED_CALL_FAILS_SDCCH,2) DROPPED_CALL_FAILS_SDCCH_C,
+                 ROUND(T1.DCR_NUMM,2) DCR_NUMM_C,
+                 ROUND(T1.HANDOVER_FAILS,2) HANDOVER_FAILS_C,
+                 ROUND(T1.INC_HO_FAILS,2) INC_HO_FAILS_C,
+                 ROUND(T2.CSSR_FAILURES,2) CSSR_FAILURES_B, 
+                ROUND(T2.HM_SD_CONG_COUNT,2) HM_SD_CONG_COUNT_B,
+                ROUND(T2.HM_TCH_CONG_COUNT,2) HM_TCH_CONG_COUNT_B,
+                ROUND(T2.DROPPED_CALL_FAILS_SDCCH,2) DROPPED_CALL_FAILS_SDCCH_B,
+                ROUND(T2.DCR_NUMM,2) DCR_NUMM_B,
+                ROUND(T2.HANDOVER_FAILS,2) HANDOVER_FAILS_B,
+                ROUND(T2.INC_HO_FAILS,2) INC_HO_FAILS_B,
+                 ROUND(T1.CSSR_FAILURES-T2.CSSR_FAILURES,2) CSSR_FAILURES, 
+                 ROUND(T1.HM_SD_CONG_COUNT-T2.HM_SD_CONG_COUNT,2) HM_SD_CONG_COUNT,
+                 ROUND(T1.HM_TCH_CONG_COUNT-T2.HM_TCH_CONG_COUNT,2) HM_TCH_CONG_COUNT,
+                 ROUND(T1.DROPPED_CALL_FAILS_SDCCH-T2.DROPPED_CALL_FAILS_SDCCH,2) DROPPED_CALL_FAILS_SDCCH,
+                 ROUND(T1.DCR_NUMM-T2.DCR_NUMM,2) DCR_NUMM,
+                 ROUND(T1.HANDOVER_FAILS-T2.HANDOVER_FAILS,2) HANDOVER_FAILS,
+                 ROUND(T1.INC_HO_FAILS-T2.INC_HO_FAILS,2) INC_HO_FAILS,
+                ROUND(T1.HM_HOFAIL_RATE,2) HM_HOFAIL_RATE,
+                ROUND(T1.HM_INC_HO_SUC_RATE,2) HM_INC_HO_SUC_RATE,
+                ROUND(T1.HM_SDCCHACC,2) HM_SDCCHACC,
+                ROUND(T1.HM_BUSY_TCH_MAX,2) HM_BUSY_TCH_MAX,
+                ROUND(T1.HM_TOT_2G_DATA_TRAFF_KB,2) HM_TOT_2G_DATA_TRAFF_KB,
+                ROUND(T1.HM_PS_ASS_FAIL,2) HM_PS_ASS_FAIL 
+                FROM
+                (
+                    SELECT   
+                     (SELECT   SUB_REGION_NAME
+                            FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                           WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                            SUB_REGION,
+                    (SELECT   BSC_NAME
+                            FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                           WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                            BSC_NAME,
+                         (SELECT   BTS_NAME
+                            FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                           WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                            BTS_NAME,
+                         (SELECT   CELL_NAME
+                            FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                           WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                            CELL_NAME,
+                         (SELECT   SUBSTR (CELL_NAME, 11, 8)
+                            FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                           WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                            SITE_ID,
+                         BSC_ID,
+                        ROUND((TCH_NORMSEIZS),2) HM_TOTAL_CALLS,
+                        ROUND((CCH_TRAFFIC),2) HM_SDCCH_TRAFFIC,
+                        ROUND((TCH_TRAFFIC),2) HM_TCHTRAFFIC,
+                        ROUND((TCH_TRAFFICHR),2) HM_TCHTRAFFIC_HR,
+                        ROUND((CCH_AVAILCH),2) AVAIL_SDCCH_MEAN,
+                        ROUND((TCH_AVAILCH),2) HM_AVAIL_TCH_MEAN,
+                        ROUND(DECODE((SDCCH_CONG_VF_NUM+ALLOC_SDCCH),0,0,(SDCCH_CONG_VF_NUM)*100/(SDCCH_CONG_VF_NUM+ALLOC_SDCCH)),2) HM_SD_CONG_RATE,
+                        ROUND(DECODE((TCH_CONGESTION_VF_DENOM),0,0,(TCH_CONGESTION_VF_NUM)*100/(TCH_CONGESTION_VF_DENOM)),2) HM_TCH_CONG_RATE,
+                        ROUND(DECODE((CSSR_VF_DENOM),0,0,(DCR_VF_NW_DENOM)/(CSSR_VF_DENOM)*100),2) HM_CSSR,
+                        ROUND(((SDRFLOSS_VF_DENOM)-(CCH_RFLOSSES))*(DCR_VF_NW_DENOM)*100/DECODE((SDRFLOSS_VF_DENOM)*(CSTCHB_VF_DENOM),0,1,(SDRFLOSS_VF_DENOM)*(CSTCHB_VF_DENOM)),2) HM_CSSR_VF,
+                        ROUND(DECODE((SDRFLOSS_VF_DENOM),0,0,(CCH_RFLOSSES)*100/(SDRFLOSS_VF_DENOM)),2) HM_SDRFLOSS,
+                        ROUND(DECODE((DCR_VF_CELL_DENOM),0,0,(DCR_VF_NUM)*100/(DCR_VF_CELL_DENOM)),2) HM_DCR,
+                        ROUND(DECODE((TCH_TRAFFIC),0,0,(DCR_VF_NUM)/(TCH_TRAFFIC)),2) HM_DROP_PER_ERLANG,
+                        ROUND(DECODE((PHOSUC_VF_DENOM),0,0,(PHOSUC_VF_NUM)*100/(PHOSUC_VF_DENOM)),2) HM_HOSUC_RATE, 
+                         CSSR_VF_DENOM - DCR_VF_NW_DENOM CSSR_FAILURES,
+                         SDCCH_CONG_VF_NUM HM_SD_CONG_COUNT,         
+                         TCH_CONGESTION_VF_NUM*NE_CNT HM_TCH_CONG_COUNT,
+                         CCH_RFLOSSES DROPPED_CALL_FAILS_SDCCH,
+                         DCR_VF_NUM DCR_NUMM,
+                         PHOSUC_VF_DENOM - PHOSUC_VF_NUM HANDOVER_FAILS,
+                         PINHOSUC_VF_DENOM - PINHOSUC_VF_NUM INC_HO_FAILS,
+                     ROUND(DECODE((PHOSUC_VF_DENOM),0,0,(PHOFAILURE_VF_NUM)*100/(PHOSUC_VF_DENOM)),2) HM_HOFAIL_RATE,
+                     ROUND(DECODE((PINHOSUC_VF_DENOM),0,100,(PINHOSUC_VF_NUM)*100/(PINHOSUC_VF_DENOM)),2) HM_INC_HO_SUC_RATE,
+                     ROUND(DECODE((SDCCHACCSUCC_VF_DENOM),0,0,(SCCHACCSUCC_VF_NUM)*100/(SDCCHACCSUCC_VF_DENOM)),2) HM_SDCCHACC,
+                     ROUND((TCH_MAXBUSY),2) HM_BUSY_TCH_MAX,
+                     ROUND((DLRLCEGTRAFF_VF+ ULRLCEGTRAFF_VF+ DLRLCGTRAFF_VF+ ULRLCGTRAFF_VF),2) HM_TOT_2G_DATA_TRAFF_KB,
+                     ROUND(100-(ROUND(DECODE((PACASSFAILR_VF_DENOM),0,100,(PACASSFAILR_VF_NUM)*100/(PACASSFAILR_VF_DENOM)),2)),2) HM_PS_ASS_FAIL 
+                  FROM   NORTHI_DATA.CELLSTS_DA TTT
+                 WHERE       DTYPE = 1
+                         AND (FRAGMENT_DATE=TRUNC(XDATA_DATE))    
+                 ) T1,
+                 (
+                    SELECT   (SELECT   BSC_NAME
+                            FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                           WHERE   BSC_ID = TTT.BSC_ID AND ROWNUM = 1)
+                         BSC_NAME,
+                         BSC_ID,
+                         AVG(CSSR_VF_DENOM - DCR_VF_NW_DENOM) CSSR_FAILURES,
+                         AVG(SDCCH_CONG_VF_NUM) HM_SD_CONG_COUNT,         
+                         AVG(TCH_CONGESTION_VF_NUM*NE_CNT) HM_TCH_CONG_COUNT,
+                         AVG(CCH_RFLOSSES) DROPPED_CALL_FAILS_SDCCH,
+                         AVG(DCR_VF_NUM) DCR_NUMM,
+                         AVG(PHOSUC_VF_DENOM - PHOSUC_VF_NUM) HANDOVER_FAILS,
+                         AVG(PINHOSUC_VF_DENOM - PINHOSUC_VF_NUM) INC_HO_FAILS
+                    FROM   NORTHI_DATA.CELLSTS_DA TTT
+                    WHERE       DTYPE = 1
+                         AND (FRAGMENT_DATE=TRUNC(XDATA_DATE))
+                    GROUP BY BSC_ID
+                 ) T2
+                 WHERE T1.BSC_NAME = T2.BSC_NAME
+             ) TA
+         ) TB
+         )
+        ) X
+        WHERE NETWORK_RANK<51
+        ORDER BY NETWORK_RANK;
+        COMMIT;
+        
+        INSERT INTO NORTHI_DATA.WORST_CELLS_2G  
+        SELECT X.*,2 TYPE FROM
+        (SELECT SUB_REGION, BSC_NAME, BTS_NAME, CELL_NAME, FRAGMENT_DATE,
+        ROW_NUMBER() OVER(PARTITION BY SUB_REGION ORDER BY MAIN_RESULT DESC) NETWORK_RANK,
+        ROW_NUMBER() OVER(PARTITION BY SUB_REGION ORDER BY MAIN_RESULT DESC) SUB_REGION_RANK, 
+        ROW_NUMBER() OVER(PARTITION BY BSC_NAME ORDER BY MAIN_RESULT DESC) BSC_RANK, 
+        MAIN_RESULT, ACCESSIBILITY, RETAINABILITY, MOBILITY,
+        HM_TOTAL_CALLS,HM_SDCCH_TRAFFIC,HM_TCHTRAFFIC,HM_TCHTRAFFIC_HR,AVAIL_SDCCH_MEAN,HM_AVAIL_TCH_MEAN,HM_SD_CONG_RATE,HM_TCH_CONG_RATE,HM_CSSR,HM_CSSR_VF,HM_SDRFLOSS,HM_DCR,HM_DROP_PER_ERLANG,HM_HOSUC_RATE,   
+        CSSR_FAILURES_C,HM_SD_CONG_COUNT_C,HM_TCH_CONG_COUNT_C,DROPPED_CALL_FAILS_SDCCH_C,DCR_NUMM_C,HANDOVER_FAILS_C,INC_HO_FAILS_C,
+        CSSR_FAILURES_B,HM_SD_CONG_COUNT_B,HM_TCH_CONG_COUNT_B,DROPPED_CALL_FAILS_SDCCH_B,DCR_NUMM_B,HANDOVER_FAILS_B,INC_HO_FAILS_B,
+        CSSR_FAILURES,HM_SD_CONG_COUNT,HM_TCH_CONG_COUNT,DROPPED_CALL_FAILS_SDCCH,DCR_NUMM,HANDOVER_FAILS,INC_HO_FAILS,
+        HM_HOFAIL_RATE,HM_INC_HO_SUC_RATE,HM_SDCCHACC,HM_BUSY_TCH_MAX,HM_TOT_2G_DATA_TRAFF_KB,HM_PS_ASS_FAIL 
+        FROM
+        (
+        SELECT TB.SUB_REGION,TB.BSC_NAME, TB.BTS_NAME, TB.CELL_NAME, TRUNC(XDATA_DATE) FRAGMENT_DATE,
+        ROUND(0.3* ACCESSIBILITY + 0.5*RETAINABILITY + 0.2*MOBILITY,2) MAIN_RESULT,
+        ROUND(TB.ACCESSIBILITY,2) ACCESSIBILITY,
+        ROUND(TB.RETAINABILITY,2) RETAINABILITY,
+        ROUND(TB.MOBILITY,2) MOBILITY,
+        ROUND(TB.HM_TOTAL_CALLS,2) HM_TOTAL_CALLS,
+        ROUND(TB.HM_SDCCH_TRAFFIC,2) HM_SDCCH_TRAFFIC,
+        ROUND(TB.HM_TCHTRAFFIC,2) HM_TCHTRAFFIC,
+        ROUND(TB.HM_TCHTRAFFIC_HR,2) HM_TCHTRAFFIC_HR,
+        ROUND(TB.AVAIL_SDCCH_MEAN,2) AVAIL_SDCCH_MEAN,
+        ROUND(TB.HM_AVAIL_TCH_MEAN,2) HM_AVAIL_TCH_MEAN,
+        ROUND(TB.HM_SD_CONG_RATE,2) HM_SD_CONG_RATE,
+        ROUND(TB.HM_TCH_CONG_RATE,2) HM_TCH_CONG_RATE,
+        ROUND(TB.HM_CSSR,2) HM_CSSR,
+        ROUND(TB.HM_CSSR_VF,2) HM_CSSR_VF,
+        ROUND(TB.HM_SDRFLOSS,2) HM_SDRFLOSS,
+        ROUND(TB.HM_DCR,2) HM_DCR,
+        ROUND(TB.HM_DROP_PER_ERLANG,2) HM_DROP_PER_ERLANG,
+        ROUND(TB.HM_HOSUC_RATE,2) HM_HOSUC_RATE,   
+        ROUND(TB.CSSR_FAILURES_C,2) CSSR_FAILURES_C,
+        ROUND(TB.HM_SD_CONG_COUNT_C,2) HM_SD_CONG_COUNT_C,
+        ROUND(TB.HM_TCH_CONG_COUNT_C) HM_TCH_CONG_COUNT_C,
+        ROUND(TB.DROPPED_CALL_FAILS_SDCCH_C,2) DROPPED_CALL_FAILS_SDCCH_C,
+        ROUND(TB.DCR_NUMM_C,2) DCR_NUMM_C,
+        ROUND(TB.HANDOVER_FAILS_C,2) HANDOVER_FAILS_C,
+        ROUND(TB.INC_HO_FAILS_C,2) INC_HO_FAILS_C,
+        ROUND(TB.CSSR_FAILURES_B,2) CSSR_FAILURES_B,
+        ROUND(TB.HM_SD_CONG_COUNT_B,2) HM_SD_CONG_COUNT_B,
+        ROUND(TB.HM_TCH_CONG_COUNT_B,2) HM_TCH_CONG_COUNT_B,
+        ROUND(TB.DROPPED_CALL_FAILS_SDCCH_B,2) DROPPED_CALL_FAILS_SDCCH_B,
+        ROUND(TB.DCR_NUMM_B,2) DCR_NUMM_B,
+        ROUND(TB.HANDOVER_FAILS_B,2) HANDOVER_FAILS_B,
+        ROUND(TB.INC_HO_FAILS_B,2) INC_HO_FAILS_B,
+        ROUND(TB.CSSR_FAILURES,2) CSSR_FAILURES,
+        ROUND(TB.HM_SD_CONG_COUNT,2) HM_SD_CONG_COUNT,
+        ROUND(TB.HM_TCH_CONG_COUNT,2) HM_TCH_CONG_COUNT,
+        ROUND(TB.DROPPED_CALL_FAILS_SDCCH,2) DROPPED_CALL_FAILS_SDCCH,
+        ROUND(TB.DCR_NUMM,2) DCR_NUMM,
+        ROUND(TB.HANDOVER_FAILS,2) HANDOVER_FAILS,
+        ROUND(TB.INC_HO_FAILS,2) INC_HO_FAILS,
+        ROUND(TB.HM_HOFAIL_RATE,2) HM_HOFAIL_RATE,
+        ROUND(TB.HM_INC_HO_SUC_RATE,2) HM_INC_HO_SUC_RATE,
+        ROUND(TB.HM_SDCCHACC,2) HM_SDCCHACC,
+        ROUND(TB.HM_BUSY_TCH_MAX,2) HM_BUSY_TCH_MAX,
+        ROUND(TB.HM_TOT_2G_DATA_TRAFF_KB,2) HM_TOT_2G_DATA_TRAFF_KB,
+        ROUND(TB.HM_PS_ASS_FAIL,2) HM_PS_ASS_FAIL     
+        FROM
+        (
+        SELECT TA.*, 0.0625*GREATEST(0,CSSR_FAILURES) + 0.375*GREATEST(0,HM_SD_CONG_COUNT) + 0.375*GREATEST(0,HM_TCH_CONG_COUNT) + 0.1875*GREATEST(0,DROPPED_CALL_FAILS_SDCCH) ACCESSIBILITY, 
+        GREATEST(0,DCR_NUMM) RETAINABILITY,
+        0.5* GREATEST(0,HANDOVER_FAILS) + 0.5*GREATEST(0,INC_HO_FAILS) MOBILITY
+            FROM
+            (
+                SELECT
+                 T1.SUB_REGION,
+                 T1.BSC_NAME,
+                 T1.BTS_NAME,
+                 T1.CELL_NAME,
+                 T1.HM_TOTAL_CALLS,
+                 T1.HM_SDCCH_TRAFFIC,
+                 T1.HM_TCHTRAFFIC,
+                 T1.HM_TCHTRAFFIC_HR,
+                 T1.AVAIL_SDCCH_MEAN,
+                 T1.HM_AVAIL_TCH_MEAN,
+                 T1.HM_SD_CONG_RATE,
+                 T1.HM_TCH_CONG_RATE,
+                 T1.HM_CSSR,
+                 T1.HM_CSSR_VF,
+                 T1.HM_SDRFLOSS,
+                 T1.HM_DCR,
+                 T1.HM_DROP_PER_ERLANG,
+                 T1.HM_HOSUC_RATE, 
+                 ROUND(T1.CSSR_FAILURES,2) CSSR_FAILURES_C, 
+                 ROUND(T1.HM_SD_CONG_COUNT,2) HM_SD_CONG_COUNT_C,
+                 ROUND(T1.HM_TCH_CONG_COUNT,2) HM_TCH_CONG_COUNT_C,
+                 ROUND(T1.DROPPED_CALL_FAILS_SDCCH,2) DROPPED_CALL_FAILS_SDCCH_C,
+                 ROUND(T1.DCR_NUMM,2) DCR_NUMM_C,
+                 ROUND(T1.HANDOVER_FAILS,2) HANDOVER_FAILS_C,
+                 ROUND(T1.INC_HO_FAILS,2) INC_HO_FAILS_C,
+                 ROUND(T2.CSSR_FAILURES,2) CSSR_FAILURES_B, 
+                ROUND(T2.HM_SD_CONG_COUNT,2) HM_SD_CONG_COUNT_B,
+                ROUND(T2.HM_TCH_CONG_COUNT,2) HM_TCH_CONG_COUNT_B,
+                ROUND(T2.DROPPED_CALL_FAILS_SDCCH,2) DROPPED_CALL_FAILS_SDCCH_B,
+                ROUND(T2.DCR_NUMM,2) DCR_NUMM_B,
+                ROUND(T2.HANDOVER_FAILS,2) HANDOVER_FAILS_B,
+                ROUND(T2.INC_HO_FAILS,2) INC_HO_FAILS_B,
+                 ROUND(T1.CSSR_FAILURES-T2.CSSR_FAILURES,2) CSSR_FAILURES, 
+                 ROUND(T1.HM_SD_CONG_COUNT-T2.HM_SD_CONG_COUNT,2) HM_SD_CONG_COUNT,
+                 ROUND(T1.HM_TCH_CONG_COUNT-T2.HM_TCH_CONG_COUNT,2) HM_TCH_CONG_COUNT,
+                 ROUND(T1.DROPPED_CALL_FAILS_SDCCH-T2.DROPPED_CALL_FAILS_SDCCH,2) DROPPED_CALL_FAILS_SDCCH,
+                 ROUND(T1.DCR_NUMM-T2.DCR_NUMM,2) DCR_NUMM,
+                 ROUND(T1.HANDOVER_FAILS-T2.HANDOVER_FAILS,2) HANDOVER_FAILS,
+                 ROUND(T1.INC_HO_FAILS-T2.INC_HO_FAILS,2) INC_HO_FAILS,
+                ROUND(T1.HM_HOFAIL_RATE,2) HM_HOFAIL_RATE,
+                ROUND(T1.HM_INC_HO_SUC_RATE,2) HM_INC_HO_SUC_RATE,
+                ROUND(T1.HM_SDCCHACC,2) HM_SDCCHACC,
+                ROUND(T1.HM_BUSY_TCH_MAX,2) HM_BUSY_TCH_MAX,
+                ROUND(T1.HM_TOT_2G_DATA_TRAFF_KB,2) HM_TOT_2G_DATA_TRAFF_KB,
+                ROUND(T1.HM_PS_ASS_FAIL,2) HM_PS_ASS_FAIL 
+                FROM
+                (
+                    SELECT   
+                     (SELECT   SUB_REGION_NAME
+                            FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                           WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                            SUB_REGION,
+                    (SELECT   BSC_NAME
+                            FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                           WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                            BSC_NAME,
+                         (SELECT   BTS_NAME
+                            FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                           WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                            BTS_NAME,
+                         (SELECT   CELL_NAME
+                            FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                           WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                            CELL_NAME,
+                         (SELECT   SUBSTR (CELL_NAME, 11, 8)
+                            FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                           WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                            SITE_ID,
+                         BSC_ID,
+                        ROUND((TCH_NORMSEIZS),2) HM_TOTAL_CALLS,
+                        ROUND((CCH_TRAFFIC),2) HM_SDCCH_TRAFFIC,
+                        ROUND((TCH_TRAFFIC),2) HM_TCHTRAFFIC,
+                        ROUND((TCH_TRAFFICHR),2) HM_TCHTRAFFIC_HR,
+                        ROUND((CCH_AVAILCH),2) AVAIL_SDCCH_MEAN,
+                        ROUND((TCH_AVAILCH),2) HM_AVAIL_TCH_MEAN,
+                        ROUND(DECODE((SDCCH_CONG_VF_NUM+ALLOC_SDCCH),0,0,(SDCCH_CONG_VF_NUM)*100/(SDCCH_CONG_VF_NUM+ALLOC_SDCCH)),2) HM_SD_CONG_RATE,
+                        ROUND(DECODE((TCH_CONGESTION_VF_DENOM),0,0,(TCH_CONGESTION_VF_NUM)*100/(TCH_CONGESTION_VF_DENOM)),2) HM_TCH_CONG_RATE,
+                        ROUND(DECODE((CSSR_VF_DENOM),0,0,(DCR_VF_NW_DENOM)/(CSSR_VF_DENOM)*100),2) HM_CSSR,
+                        ROUND(((SDRFLOSS_VF_DENOM)-(CCH_RFLOSSES))*(DCR_VF_NW_DENOM)*100/DECODE((SDRFLOSS_VF_DENOM)*(CSTCHB_VF_DENOM),0,1,(SDRFLOSS_VF_DENOM)*(CSTCHB_VF_DENOM)),2) HM_CSSR_VF,
+                        ROUND(DECODE((SDRFLOSS_VF_DENOM),0,0,(CCH_RFLOSSES)*100/(SDRFLOSS_VF_DENOM)),2) HM_SDRFLOSS,
+                        ROUND(DECODE((DCR_VF_CELL_DENOM),0,0,(DCR_VF_NUM)*100/(DCR_VF_CELL_DENOM)),2) HM_DCR,
+                        ROUND(DECODE((TCH_TRAFFIC),0,0,(DCR_VF_NUM)/(TCH_TRAFFIC)),2) HM_DROP_PER_ERLANG,
+                        ROUND(DECODE((PHOSUC_VF_DENOM),0,0,(PHOSUC_VF_NUM)*100/(PHOSUC_VF_DENOM)),2) HM_HOSUC_RATE, 
+                         CSSR_VF_DENOM - DCR_VF_NW_DENOM CSSR_FAILURES,
+                         SDCCH_CONG_VF_NUM HM_SD_CONG_COUNT,         
+                         TCH_CONGESTION_VF_NUM*NE_CNT HM_TCH_CONG_COUNT,
+                         CCH_RFLOSSES DROPPED_CALL_FAILS_SDCCH,
+                         DCR_VF_NUM DCR_NUMM,
+                         PHOSUC_VF_DENOM - PHOSUC_VF_NUM HANDOVER_FAILS,
+                         PINHOSUC_VF_DENOM - PINHOSUC_VF_NUM INC_HO_FAILS,
+                     ROUND(DECODE((PHOSUC_VF_DENOM),0,0,(PHOFAILURE_VF_NUM)*100/(PHOSUC_VF_DENOM)),2) HM_HOFAIL_RATE,
+                     ROUND(DECODE((PINHOSUC_VF_DENOM),0,100,(PINHOSUC_VF_NUM)*100/(PINHOSUC_VF_DENOM)),2) HM_INC_HO_SUC_RATE,
+                     ROUND(DECODE((SDCCHACCSUCC_VF_DENOM),0,0,(SCCHACCSUCC_VF_NUM)*100/(SDCCHACCSUCC_VF_DENOM)),2) HM_SDCCHACC,
+                     ROUND((TCH_MAXBUSY),2) HM_BUSY_TCH_MAX,
+                     ROUND((DLRLCEGTRAFF_VF+ ULRLCEGTRAFF_VF+ DLRLCGTRAFF_VF+ ULRLCGTRAFF_VF),2) HM_TOT_2G_DATA_TRAFF_KB,
+                     ROUND(100-(ROUND(DECODE((PACASSFAILR_VF_DENOM),0,100,(PACASSFAILR_VF_NUM)*100/(PACASSFAILR_VF_DENOM)),2)),2) HM_PS_ASS_FAIL 
+                  FROM   NORTHI_DATA.CELLSTS_DA TTT
+                 WHERE       DTYPE = 1
+                         AND (FRAGMENT_DATE=TRUNC(XDATA_DATE))
+                 ) T1,
+                 (
+                     SELECT   (SELECT   SUB_REGION_NAME
+                            FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                           WHERE   SUB_REGION_ID = TTT.SUB_REGION_ID AND ROWNUM = 1)
+                         SUB_REGION,
+                         SUB_REGION_ID,
+                         AVG(CSSR_VF_DENOM - DCR_VF_NW_DENOM) CSSR_FAILURES,
+                         AVG(SDCCH_CONG_VF_NUM) HM_SD_CONG_COUNT,         
+                         AVG(TCH_CONGESTION_VF_NUM*NE_CNT) HM_TCH_CONG_COUNT,
+                         AVG(CCH_RFLOSSES) DROPPED_CALL_FAILS_SDCCH,
+                         AVG(DCR_VF_NUM) DCR_NUMM,
+                         AVG(PHOSUC_VF_DENOM - PHOSUC_VF_NUM) HANDOVER_FAILS,
+                         AVG(PINHOSUC_VF_DENOM - PINHOSUC_VF_NUM) INC_HO_FAILS
+                    FROM   NORTHI_DATA.CELLSTS_DA TTT
+                    WHERE       DTYPE = 1
+                         AND (FRAGMENT_DATE=TRUNC(XDATA_DATE))
+                          GROUP BY SUB_REGION_ID
+                 ) T2
+                 WHERE T1.SUB_REGION = T2.SUB_REGION 
+             ) TA
+         ) TB
+         )
+        ) X
+        WHERE NETWORK_RANK<51
+        ORDER BY NETWORK_RANK;
+        COMMIT;
+        
+        INSERT INTO NORTHI_DATA.WORST_CELLS_2G  
+        SELECT X.*,3 TYPE FROM
+        (SELECT SUB_REGION, BSC_NAME, BTS_NAME, CELL_NAME, FRAGMENT_DATE,
+        ROW_NUMBER() OVER(PARTITION BY SUB_REGION ORDER BY MAIN_RESULT DESC) NETWORK_RANK,
+        ROW_NUMBER() OVER(PARTITION BY SUB_REGION ORDER BY MAIN_RESULT DESC) SUB_REGION_RANK, 
+        ROW_NUMBER() OVER(PARTITION BY BSC_NAME ORDER BY MAIN_RESULT DESC) BSC_RANK, 
+        MAIN_RESULT, ACCESSIBILITY, RETAINABILITY, MOBILITY,
+        HM_TOTAL_CALLS,HM_SDCCH_TRAFFIC,HM_TCHTRAFFIC,HM_TCHTRAFFIC_HR,AVAIL_SDCCH_MEAN,HM_AVAIL_TCH_MEAN,HM_SD_CONG_RATE,HM_TCH_CONG_RATE,HM_CSSR,HM_CSSR_VF,HM_SDRFLOSS,HM_DCR,HM_DROP_PER_ERLANG,HM_HOSUC_RATE,   
+        CSSR_FAILURES_C,HM_SD_CONG_COUNT_C,HM_TCH_CONG_COUNT_C,DROPPED_CALL_FAILS_SDCCH_C,DCR_NUMM_C,HANDOVER_FAILS_C,INC_HO_FAILS_C,
+        CSSR_FAILURES_B,HM_SD_CONG_COUNT_B,HM_TCH_CONG_COUNT_B,DROPPED_CALL_FAILS_SDCCH_B,DCR_NUMM_B,HANDOVER_FAILS_B,INC_HO_FAILS_B,
+        CSSR_FAILURES,HM_SD_CONG_COUNT,HM_TCH_CONG_COUNT,DROPPED_CALL_FAILS_SDCCH,DCR_NUMM,HANDOVER_FAILS,INC_HO_FAILS,
+        HM_HOFAIL_RATE,HM_INC_HO_SUC_RATE,HM_SDCCHACC,HM_BUSY_TCH_MAX,HM_TOT_2G_DATA_TRAFF_KB,HM_PS_ASS_FAIL 
+        FROM
+        (
+        SELECT TB.SUB_REGION,TB.BSC_NAME, TB.BTS_NAME, TB.CELL_NAME, TRUNC(XDATA_DATE) FRAGMENT_DATE,
+        ROUND(0.3* ACCESSIBILITY + 0.5*RETAINABILITY + 0.2*MOBILITY,2) MAIN_RESULT,
+        ROUND(TB.ACCESSIBILITY,2) ACCESSIBILITY,
+        ROUND(TB.RETAINABILITY,2) RETAINABILITY,
+        ROUND(TB.MOBILITY,2) MOBILITY,
+        ROUND(TB.HM_TOTAL_CALLS,2) HM_TOTAL_CALLS,
+        ROUND(TB.HM_SDCCH_TRAFFIC,2) HM_SDCCH_TRAFFIC,
+        ROUND(TB.HM_TCHTRAFFIC,2) HM_TCHTRAFFIC,
+        ROUND(TB.HM_TCHTRAFFIC_HR,2) HM_TCHTRAFFIC_HR,
+        ROUND(TB.AVAIL_SDCCH_MEAN,2) AVAIL_SDCCH_MEAN,
+        ROUND(TB.HM_AVAIL_TCH_MEAN,2) HM_AVAIL_TCH_MEAN,
+        ROUND(TB.HM_SD_CONG_RATE,2) HM_SD_CONG_RATE,
+        ROUND(TB.HM_TCH_CONG_RATE,2) HM_TCH_CONG_RATE,
+        ROUND(TB.HM_CSSR,2) HM_CSSR,
+        ROUND(TB.HM_CSSR_VF,2) HM_CSSR_VF,
+        ROUND(TB.HM_SDRFLOSS,2) HM_SDRFLOSS,
+        ROUND(TB.HM_DCR,2) HM_DCR,
+        ROUND(TB.HM_DROP_PER_ERLANG,2) HM_DROP_PER_ERLANG,
+        ROUND(TB.HM_HOSUC_RATE,2) HM_HOSUC_RATE,   
+        ROUND(TB.CSSR_FAILURES_C,2) CSSR_FAILURES_C,
+        ROUND(TB.HM_SD_CONG_COUNT_C,2) HM_SD_CONG_COUNT_C,
+        ROUND(TB.HM_TCH_CONG_COUNT_C) HM_TCH_CONG_COUNT_C,
+        ROUND(TB.DROPPED_CALL_FAILS_SDCCH_C,2) DROPPED_CALL_FAILS_SDCCH_C,
+        ROUND(TB.DCR_NUMM_C,2) DCR_NUMM_C,
+        ROUND(TB.HANDOVER_FAILS_C,2) HANDOVER_FAILS_C,
+        ROUND(TB.INC_HO_FAILS_C,2) INC_HO_FAILS_C,
+        ROUND(TB.CSSR_FAILURES_B,2) CSSR_FAILURES_B,
+        ROUND(TB.HM_SD_CONG_COUNT_B,2) HM_SD_CONG_COUNT_B,
+        ROUND(TB.HM_TCH_CONG_COUNT_B,2) HM_TCH_CONG_COUNT_B,
+        ROUND(TB.DROPPED_CALL_FAILS_SDCCH_B,2) DROPPED_CALL_FAILS_SDCCH_B,
+        ROUND(TB.DCR_NUMM_B,2) DCR_NUMM_B,
+        ROUND(TB.HANDOVER_FAILS_B,2) HANDOVER_FAILS_B,
+        ROUND(TB.INC_HO_FAILS_B,2) INC_HO_FAILS_B,
+        ROUND(TB.CSSR_FAILURES,2) CSSR_FAILURES,
+        ROUND(TB.HM_SD_CONG_COUNT,2) HM_SD_CONG_COUNT,
+        ROUND(TB.HM_TCH_CONG_COUNT,2) HM_TCH_CONG_COUNT,
+        ROUND(TB.DROPPED_CALL_FAILS_SDCCH,2) DROPPED_CALL_FAILS_SDCCH,
+        ROUND(TB.DCR_NUMM,2) DCR_NUMM,
+        ROUND(TB.HANDOVER_FAILS,2) HANDOVER_FAILS,
+        ROUND(TB.INC_HO_FAILS,2) INC_HO_FAILS,
+        ROUND(TB.HM_HOFAIL_RATE,2) HM_HOFAIL_RATE,
+        ROUND(TB.HM_INC_HO_SUC_RATE,2) HM_INC_HO_SUC_RATE,
+        ROUND(TB.HM_SDCCHACC,2) HM_SDCCHACC,
+        ROUND(TB.HM_BUSY_TCH_MAX,2) HM_BUSY_TCH_MAX,
+        ROUND(TB.HM_TOT_2G_DATA_TRAFF_KB,2) HM_TOT_2G_DATA_TRAFF_KB,
+        ROUND(TB.HM_PS_ASS_FAIL,2) HM_PS_ASS_FAIL 
+        FROM
+        (
+        SELECT TA.*, 0.0625*GREATEST(0,CSSR_FAILURES) + 0.375*GREATEST(0,HM_SD_CONG_COUNT) + 0.375*GREATEST(0,HM_TCH_CONG_COUNT) + 0.1875*GREATEST(0,DROPPED_CALL_FAILS_SDCCH) ACCESSIBILITY, 
+        GREATEST(0,DCR_NUMM) RETAINABILITY,
+        0.5* GREATEST(0,HANDOVER_FAILS) + 0.5*GREATEST(0,INC_HO_FAILS) MOBILITY
+            FROM
+            (
+              SELECT
+             T1.SUB_REGION,
+             T1.BSC_NAME,
+             T1.BTS_NAME,
+             T1.CELL_NAME,        
+            T1.HM_TOTAL_CALLS,
+            T1.HM_SDCCH_TRAFFIC,
+            T1.HM_TCHTRAFFIC,
+            T1.HM_TCHTRAFFIC_HR,
+            T1.AVAIL_SDCCH_MEAN,
+            T1.HM_AVAIL_TCH_MEAN,
+            T1.HM_SD_CONG_RATE,
+            T1.HM_TCH_CONG_RATE,
+            T1.HM_CSSR,
+            T1.HM_CSSR_VF,
+            T1.HM_SDRFLOSS,
+            T1.HM_DCR,
+            T1.HM_DROP_PER_ERLANG,
+            T1.HM_HOSUC_RATE, 
+            ROUND(T1.CSSR_FAILURES,2) CSSR_FAILURES_C, 
+            ROUND(T1.HM_SD_CONG_COUNT,2) HM_SD_CONG_COUNT_C,
+            ROUND(T1.HM_TCH_CONG_COUNT,2) HM_TCH_CONG_COUNT_C,
+            ROUND(T1.DROPPED_CALL_FAILS_SDCCH,2) DROPPED_CALL_FAILS_SDCCH_C,
+            ROUND(T1.DCR_NUMM,2) DCR_NUMM_C,
+            ROUND(T1.HANDOVER_FAILS,2) HANDOVER_FAILS_C,
+            ROUND(T1.INC_HO_FAILS,2) INC_HO_FAILS_C,    
+            ROUND(T2.CSSR_FAILURES,2) CSSR_FAILURES_B, 
+            ROUND(T2.HM_SD_CONG_COUNT,2) HM_SD_CONG_COUNT_B,
+            ROUND(T2.HM_TCH_CONG_COUNT,2) HM_TCH_CONG_COUNT_B,
+            ROUND(T2.DROPPED_CALL_FAILS_SDCCH,2) DROPPED_CALL_FAILS_SDCCH_B,
+            ROUND(T2.DCR_NUMM,2) DCR_NUMM_B,
+            ROUND(T2.HANDOVER_FAILS,2) HANDOVER_FAILS_B,
+            ROUND(T2.INC_HO_FAILS,2) INC_HO_FAILS_B,
+             ROUND(T1.CSSR_FAILURES-T2.CSSR_FAILURES,2) CSSR_FAILURES, 
+             ROUND(T1.HM_SD_CONG_COUNT-T2.HM_SD_CONG_COUNT,2) HM_SD_CONG_COUNT,
+             ROUND(T1.HM_TCH_CONG_COUNT-T2.HM_TCH_CONG_COUNT,2) HM_TCH_CONG_COUNT,
+             ROUND(T1.DROPPED_CALL_FAILS_SDCCH-T2.DROPPED_CALL_FAILS_SDCCH,2) DROPPED_CALL_FAILS_SDCCH,
+             ROUND(T1.DCR_NUMM-T2.DCR_NUMM,2) DCR_NUMM,
+             ROUND(T1.HANDOVER_FAILS-T2.HANDOVER_FAILS,2) HANDOVER_FAILS,
+             ROUND(T1.INC_HO_FAILS-T2.INC_HO_FAILS,2) INC_HO_FAILS,
+                ROUND(T1.HM_HOFAIL_RATE,2) HM_HOFAIL_RATE,
+                ROUND(T1.HM_INC_HO_SUC_RATE,2) HM_INC_HO_SUC_RATE,
+                ROUND(T1.HM_SDCCHACC,2) HM_SDCCHACC,
+                ROUND(T1.HM_BUSY_TCH_MAX,2) HM_BUSY_TCH_MAX,
+                ROUND(T1.HM_TOT_2G_DATA_TRAFF_KB,2) HM_TOT_2G_DATA_TRAFF_KB,
+                ROUND(T1.HM_PS_ASS_FAIL,2) HM_PS_ASS_FAIL 
+
+            FROM
+            (
+                SELECT   
+                 (SELECT   SUB_REGION_NAME
+                        FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                       WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                        SUB_REGION,
+                (SELECT   BSC_NAME
+                        FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                       WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                        BSC_NAME,
+                     (SELECT   BTS_NAME
+                        FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                       WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                        BTS_NAME,
+                     (SELECT   CELL_NAME
+                        FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                       WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                        CELL_NAME,
+                     (SELECT   SUBSTR (CELL_NAME, 11, 8)
+                        FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                       WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                        SITE_ID,
+                     FRAGMENT_DATE,
+                        ROUND((TCH_NORMSEIZS),2) HM_TOTAL_CALLS,
+                        ROUND((CCH_TRAFFIC),2) HM_SDCCH_TRAFFIC,
+                        ROUND((TCH_TRAFFIC),2) HM_TCHTRAFFIC,
+                        ROUND((TCH_TRAFFICHR),2) HM_TCHTRAFFIC_HR,
+                        ROUND((CCH_AVAILCH),2) AVAIL_SDCCH_MEAN,
+                        ROUND((TCH_AVAILCH),2) HM_AVAIL_TCH_MEAN,
+                        ROUND(DECODE((SDCCH_CONG_VF_NUM+ALLOC_SDCCH),0,0,(SDCCH_CONG_VF_NUM)*100/(SDCCH_CONG_VF_NUM+ALLOC_SDCCH)),2) HM_SD_CONG_RATE,
+                        ROUND(DECODE((TCH_CONGESTION_VF_DENOM),0,0,(TCH_CONGESTION_VF_NUM)*100/(TCH_CONGESTION_VF_DENOM)),2) HM_TCH_CONG_RATE,
+                        ROUND(DECODE((CSSR_VF_DENOM),0,0,(DCR_VF_NW_DENOM)/(CSSR_VF_DENOM)*100),2) HM_CSSR,
+                        ROUND(((SDRFLOSS_VF_DENOM)-(CCH_RFLOSSES))*(DCR_VF_NW_DENOM)*100/DECODE((SDRFLOSS_VF_DENOM)*(CSTCHB_VF_DENOM),0,1,(SDRFLOSS_VF_DENOM)*(CSTCHB_VF_DENOM)),2) HM_CSSR_VF,
+                        ROUND(DECODE((SDRFLOSS_VF_DENOM),0,0,(CCH_RFLOSSES)*100/(SDRFLOSS_VF_DENOM)),2) HM_SDRFLOSS,
+                        ROUND(DECODE((DCR_VF_CELL_DENOM),0,0,(DCR_VF_NUM)*100/(DCR_VF_CELL_DENOM)),2) HM_DCR,
+                        ROUND(DECODE((TCH_TRAFFIC),0,0,(DCR_VF_NUM)/(TCH_TRAFFIC)),2) HM_DROP_PER_ERLANG,
+                        ROUND(DECODE((PHOSUC_VF_DENOM),0,0,(PHOSUC_VF_NUM)*100/(PHOSUC_VF_DENOM)),2) HM_HOSUC_RATE, 
+                     CSSR_VF_DENOM - DCR_VF_NW_DENOM CSSR_FAILURES,
+                     SDCCH_CONG_VF_NUM HM_SD_CONG_COUNT,         
+                     TCH_CONGESTION_VF_NUM*NE_CNT HM_TCH_CONG_COUNT,
+                     CCH_RFLOSSES DROPPED_CALL_FAILS_SDCCH,
+                     DCR_VF_NUM DCR_NUMM,
+                     PHOSUC_VF_DENOM - PHOSUC_VF_NUM HANDOVER_FAILS,
+                     PINHOSUC_VF_DENOM - PINHOSUC_VF_NUM INC_HO_FAILS,
+                     ROUND(DECODE((PHOSUC_VF_DENOM),0,0,(PHOFAILURE_VF_NUM)*100/(PHOSUC_VF_DENOM)),2) HM_HOFAIL_RATE,
+                     ROUND(DECODE((PINHOSUC_VF_DENOM),0,100,(PINHOSUC_VF_NUM)*100/(PINHOSUC_VF_DENOM)),2) HM_INC_HO_SUC_RATE,
+                     ROUND(DECODE((SDCCHACCSUCC_VF_DENOM),0,0,(SCCHACCSUCC_VF_NUM)*100/(SDCCHACCSUCC_VF_DENOM)),2) HM_SDCCHACC,
+                     ROUND((TCH_MAXBUSY),2) HM_BUSY_TCH_MAX,
+                     ROUND((DLRLCEGTRAFF_VF+ ULRLCEGTRAFF_VF+ DLRLCGTRAFF_VF+ ULRLCGTRAFF_VF),2) HM_TOT_2G_DATA_TRAFF_KB,
+                     ROUND(100-(ROUND(DECODE((PACASSFAILR_VF_DENOM),0,100,(PACASSFAILR_VF_NUM)*100/(PACASSFAILR_VF_DENOM)),2)),2) HM_PS_ASS_FAIL 
+              FROM   NORTHI_DATA.CELLSTS TTT
+             WHERE       DTYPE = 1
+                     AND (FRAGMENT_DATE BETWEEN TRUNC(XDATA_DATE) AND TRUNC(XDATA_DATE)+23/24)
+                         
+             ) T1,
+             (
+                    
+               SELECT * FROM 
+                (SELECT   (SELECT   BSC_NAME
+                        FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                       WHERE   BSC_ID = TTT.BSC_ID AND ROWNUM = 1)
+                      BSC_NAME,
+                      FRAGMENT_DATE,
+                     AVG(CSSR_VF_DENOM - DCR_VF_NW_DENOM) CSSR_FAILURES,
+                     AVG(SDCCH_CONG_VF_NUM) HM_SD_CONG_COUNT,         
+                     AVG(TCH_CONGESTION_VF_NUM*NE_CNT) HM_TCH_CONG_COUNT,
+                     AVG(CCH_RFLOSSES) DROPPED_CALL_FAILS_SDCCH,
+                     AVG(DCR_VF_NUM) DCR_NUMM,
+                     AVG(PHOSUC_VF_DENOM - PHOSUC_VF_NUM) HANDOVER_FAILS,
+                     AVG(PINHOSUC_VF_DENOM - PINHOSUC_VF_NUM) INC_HO_FAILS,
+                     AVG(TCH_TRAFFIC) TCH_TRAFFIC,
+                     BSC_ID,           
+                     ROW_NUMBER() OVER(PARTITION BY BSC_ID ORDER BY SUM(TCH_TRAFFIC) DESC) RN                                    
+                FROM   NORTHI_DATA.CELLSTS TTT
+                WHERE   DTYPE = 1
+                     AND (FRAGMENT_DATE BETWEEN TRUNC(XDATA_DATE) AND TRUNC(XDATA_DATE)+23/24)
+                GROUP BY BSC_ID, FRAGMENT_DATE
+        )
+        WHERE RN=1
+             ) T2
+             WHERE T1.BSC_NAME = T2.BSC_NAME AND T1.FRAGMENT_DATE=T2.FRAGMENT_DATE
+             ) TA
+         ) TB
+         )
+        ) X
+        WHERE NETWORK_RANK<51
+        ORDER BY NETWORK_RANK;
+        COMMIT;
+        
+        INSERT INTO NORTHI_DATA.WORST_CELLS_2G  
+        SELECT X.*,4 TYPE FROM
+        (SELECT SUB_REGION, BSC_NAME, BTS_NAME, CELL_NAME, FRAGMENT_DATE,
+        ROW_NUMBER() OVER(PARTITION BY SUB_REGION ORDER BY MAIN_RESULT DESC) NETWORK_RANK,
+        ROW_NUMBER() OVER(PARTITION BY SUB_REGION ORDER BY MAIN_RESULT DESC) SUB_REGION_RANK, 
+        ROW_NUMBER() OVER(PARTITION BY BSC_NAME ORDER BY MAIN_RESULT DESC) BSC_RANK, 
+        MAIN_RESULT, ACCESSIBILITY, RETAINABILITY, MOBILITY,
+        HM_TOTAL_CALLS,HM_SDCCH_TRAFFIC,HM_TCHTRAFFIC,HM_TCHTRAFFIC_HR,AVAIL_SDCCH_MEAN,HM_AVAIL_TCH_MEAN,HM_SD_CONG_RATE,HM_TCH_CONG_RATE,HM_CSSR,HM_CSSR_VF,HM_SDRFLOSS,HM_DCR,HM_DROP_PER_ERLANG,HM_HOSUC_RATE,   
+        CSSR_FAILURES_C,HM_SD_CONG_COUNT_C,HM_TCH_CONG_COUNT_C,DROPPED_CALL_FAILS_SDCCH_C,DCR_NUMM_C,HANDOVER_FAILS_C,INC_HO_FAILS_C,
+        CSSR_FAILURES_B,HM_SD_CONG_COUNT_B,HM_TCH_CONG_COUNT_B,DROPPED_CALL_FAILS_SDCCH_B,DCR_NUMM_B,HANDOVER_FAILS_B,INC_HO_FAILS_B,
+        CSSR_FAILURES,HM_SD_CONG_COUNT,HM_TCH_CONG_COUNT,DROPPED_CALL_FAILS_SDCCH,DCR_NUMM,HANDOVER_FAILS,INC_HO_FAILS,
+        HM_HOFAIL_RATE,HM_INC_HO_SUC_RATE,HM_SDCCHACC,HM_BUSY_TCH_MAX,HM_TOT_2G_DATA_TRAFF_KB,HM_PS_ASS_FAIL 
+        FROM
+        (
+        SELECT TB.SUB_REGION,TB.BSC_NAME, TB.BTS_NAME, TB.CELL_NAME, TRUNC(XDATA_DATE) FRAGMENT_DATE,
+        ROUND(0.3* ACCESSIBILITY + 0.5*RETAINABILITY + 0.2*MOBILITY,2) MAIN_RESULT,
+        ROUND(TB.ACCESSIBILITY,2) ACCESSIBILITY,
+        ROUND(TB.RETAINABILITY,2) RETAINABILITY,
+        ROUND(TB.MOBILITY,2) MOBILITY,
+        ROUND(TB.HM_TOTAL_CALLS,2) HM_TOTAL_CALLS,
+        ROUND(TB.HM_SDCCH_TRAFFIC,2) HM_SDCCH_TRAFFIC,
+        ROUND(TB.HM_TCHTRAFFIC,2) HM_TCHTRAFFIC,
+        ROUND(TB.HM_TCHTRAFFIC_HR,2) HM_TCHTRAFFIC_HR,
+        ROUND(TB.AVAIL_SDCCH_MEAN,2) AVAIL_SDCCH_MEAN,
+        ROUND(TB.HM_AVAIL_TCH_MEAN,2) HM_AVAIL_TCH_MEAN,
+        ROUND(TB.HM_SD_CONG_RATE,2) HM_SD_CONG_RATE,
+        ROUND(TB.HM_TCH_CONG_RATE,2) HM_TCH_CONG_RATE,
+        ROUND(TB.HM_CSSR,2) HM_CSSR,
+        ROUND(TB.HM_CSSR_VF,2) HM_CSSR_VF,
+        ROUND(TB.HM_SDRFLOSS,2) HM_SDRFLOSS,
+        ROUND(TB.HM_DCR,2) HM_DCR,
+        ROUND(TB.HM_DROP_PER_ERLANG,2) HM_DROP_PER_ERLANG,
+        ROUND(TB.HM_HOSUC_RATE,2) HM_HOSUC_RATE,   
+        ROUND(TB.CSSR_FAILURES_C,2) CSSR_FAILURES_C,
+        ROUND(TB.HM_SD_CONG_COUNT_C,2) HM_SD_CONG_COUNT_C,
+        ROUND(TB.HM_TCH_CONG_COUNT_C) HM_TCH_CONG_COUNT_C,
+        ROUND(TB.DROPPED_CALL_FAILS_SDCCH_C,2) DROPPED_CALL_FAILS_SDCCH_C,
+        ROUND(TB.DCR_NUMM_C,2) DCR_NUMM_C,
+        ROUND(TB.HANDOVER_FAILS_C,2) HANDOVER_FAILS_C,
+        ROUND(TB.INC_HO_FAILS_C,2) INC_HO_FAILS_C,
+        ROUND(TB.CSSR_FAILURES_B,2) CSSR_FAILURES_B,
+        ROUND(TB.HM_SD_CONG_COUNT_B,2) HM_SD_CONG_COUNT_B,
+        ROUND(TB.HM_TCH_CONG_COUNT_B,2) HM_TCH_CONG_COUNT_B,
+        ROUND(TB.DROPPED_CALL_FAILS_SDCCH_B,2) DROPPED_CALL_FAILS_SDCCH_B,
+        ROUND(TB.DCR_NUMM_B,2) DCR_NUMM_B,
+        ROUND(TB.HANDOVER_FAILS_B,2) HANDOVER_FAILS_B,
+        ROUND(TB.INC_HO_FAILS_B,2) INC_HO_FAILS_B,
+        ROUND(TB.CSSR_FAILURES,2) CSSR_FAILURES,
+        ROUND(TB.HM_SD_CONG_COUNT,2) HM_SD_CONG_COUNT,
+        ROUND(TB.HM_TCH_CONG_COUNT,2) HM_TCH_CONG_COUNT,
+        ROUND(TB.DROPPED_CALL_FAILS_SDCCH,2) DROPPED_CALL_FAILS_SDCCH,
+        ROUND(TB.DCR_NUMM,2) DCR_NUMM,
+        ROUND(TB.HANDOVER_FAILS,2) HANDOVER_FAILS,
+        ROUND(TB.INC_HO_FAILS,2) INC_HO_FAILS,
+        ROUND(TB.HM_HOFAIL_RATE,2) HM_HOFAIL_RATE,
+        ROUND(TB.HM_INC_HO_SUC_RATE,2) HM_INC_HO_SUC_RATE,
+        ROUND(TB.HM_SDCCHACC,2) HM_SDCCHACC,
+        ROUND(TB.HM_BUSY_TCH_MAX,2) HM_BUSY_TCH_MAX,
+        ROUND(TB.HM_TOT_2G_DATA_TRAFF_KB,2) HM_TOT_2G_DATA_TRAFF_KB,
+        ROUND(TB.HM_PS_ASS_FAIL,2) HM_PS_ASS_FAIL 
+        FROM
+        (
+        SELECT TA.*, 0.0625*GREATEST(0,CSSR_FAILURES) + 0.375*GREATEST(0,HM_SD_CONG_COUNT) + 0.375*GREATEST(0,HM_TCH_CONG_COUNT) + 0.1875*GREATEST(0,DROPPED_CALL_FAILS_SDCCH) ACCESSIBILITY, 
+        GREATEST(0,DCR_NUMM) RETAINABILITY,
+        0.5* GREATEST(0,HANDOVER_FAILS) + 0.5*GREATEST(0,INC_HO_FAILS) MOBILITY
+            FROM
+            (
+                SELECT
+             T1.SUB_REGION,
+             T1.BSC_NAME,
+             T1.BTS_NAME,
+             T1.CELL_NAME,        
+            T1.HM_TOTAL_CALLS,
+            T1.HM_SDCCH_TRAFFIC,
+            T1.HM_TCHTRAFFIC,
+            T1.HM_TCHTRAFFIC_HR,
+            T1.AVAIL_SDCCH_MEAN,
+            T1.HM_AVAIL_TCH_MEAN,
+            T1.HM_SD_CONG_RATE,
+            T1.HM_TCH_CONG_RATE,
+            T1.HM_CSSR,
+            T1.HM_CSSR_VF,
+            T1.HM_SDRFLOSS,
+            T1.HM_DCR,
+            T1.HM_DROP_PER_ERLANG,
+            T1.HM_HOSUC_RATE,    
+            ROUND(T1.CSSR_FAILURES,2) CSSR_FAILURES_C, 
+            ROUND(T1.HM_SD_CONG_COUNT,2) HM_SD_CONG_COUNT_C,
+            ROUND(T1.HM_TCH_CONG_COUNT,2) HM_TCH_CONG_COUNT_C,
+            ROUND(T1.DROPPED_CALL_FAILS_SDCCH,2) DROPPED_CALL_FAILS_SDCCH_C,
+            ROUND(T1.DCR_NUMM,2) DCR_NUMM_C,
+            ROUND(T1.HANDOVER_FAILS,2) HANDOVER_FAILS_C,
+            ROUND(T1.INC_HO_FAILS,2) INC_HO_FAILS_C,  
+            ROUND(T2.CSSR_FAILURES,2) CSSR_FAILURES_B, 
+            ROUND(T2.HM_SD_CONG_COUNT,2) HM_SD_CONG_COUNT_B,
+            ROUND(T2.HM_TCH_CONG_COUNT,2) HM_TCH_CONG_COUNT_B,
+            ROUND(T2.DROPPED_CALL_FAILS_SDCCH,2) DROPPED_CALL_FAILS_SDCCH_B,
+            ROUND(T2.DCR_NUMM,2) DCR_NUMM_B,
+            ROUND(T2.HANDOVER_FAILS,2) HANDOVER_FAILS_B,
+            ROUND(T2.INC_HO_FAILS,2) INC_HO_FAILS_B,
+             ROUND(T1.CSSR_FAILURES-T2.CSSR_FAILURES,2) CSSR_FAILURES, 
+             ROUND(T1.HM_SD_CONG_COUNT-T2.HM_SD_CONG_COUNT,2) HM_SD_CONG_COUNT,
+             ROUND(T1.HM_TCH_CONG_COUNT-T2.HM_TCH_CONG_COUNT,2) HM_TCH_CONG_COUNT,
+             ROUND(T1.DROPPED_CALL_FAILS_SDCCH-T2.DROPPED_CALL_FAILS_SDCCH,2) DROPPED_CALL_FAILS_SDCCH,
+             ROUND(T1.DCR_NUMM-T2.DCR_NUMM,2) DCR_NUMM,
+             ROUND(T1.HANDOVER_FAILS-T2.HANDOVER_FAILS,2) HANDOVER_FAILS,
+             ROUND(T1.INC_HO_FAILS-T2.INC_HO_FAILS,2) INC_HO_FAILS,
+                ROUND(T1.HM_HOFAIL_RATE,2) HM_HOFAIL_RATE,
+                ROUND(T1.HM_INC_HO_SUC_RATE,2) HM_INC_HO_SUC_RATE,
+                ROUND(T1.HM_SDCCHACC,2) HM_SDCCHACC,
+                ROUND(T1.HM_BUSY_TCH_MAX,2) HM_BUSY_TCH_MAX,
+                ROUND(T1.HM_TOT_2G_DATA_TRAFF_KB,2) HM_TOT_2G_DATA_TRAFF_KB,
+                ROUND(T1.HM_PS_ASS_FAIL,2) HM_PS_ASS_FAIL 
+            FROM
+            (
+                SELECT   
+                 (SELECT   SUB_REGION_NAME
+                        FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                       WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                        SUB_REGION,
+                (SELECT   BSC_NAME
+                        FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                       WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                        BSC_NAME,
+                     (SELECT   BTS_NAME
+                        FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                       WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                        BTS_NAME,
+                     (SELECT   CELL_NAME
+                        FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                       WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                        CELL_NAME,
+                     (SELECT   SUBSTR (CELL_NAME, 11, 8)
+                        FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                       WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                        SITE_ID,
+                     FRAGMENT_DATE,
+                        ROUND((TCH_NORMSEIZS),2) HM_TOTAL_CALLS,
+                        ROUND((CCH_TRAFFIC),2) HM_SDCCH_TRAFFIC,
+                        ROUND((TCH_TRAFFIC),2) HM_TCHTRAFFIC,
+                        ROUND((TCH_TRAFFICHR),2) HM_TCHTRAFFIC_HR,
+                        ROUND((CCH_AVAILCH),2) AVAIL_SDCCH_MEAN,
+                        ROUND((TCH_AVAILCH),2) HM_AVAIL_TCH_MEAN,
+                        ROUND(DECODE((SDCCH_CONG_VF_NUM+ALLOC_SDCCH),0,0,(SDCCH_CONG_VF_NUM)*100/(SDCCH_CONG_VF_NUM+ALLOC_SDCCH)),2) HM_SD_CONG_RATE,
+                        ROUND(DECODE((TCH_CONGESTION_VF_DENOM),0,0,(TCH_CONGESTION_VF_NUM)*100/(TCH_CONGESTION_VF_DENOM)),2) HM_TCH_CONG_RATE,
+                        ROUND(DECODE((CSSR_VF_DENOM),0,0,(DCR_VF_NW_DENOM)/(CSSR_VF_DENOM)*100),2) HM_CSSR,
+                        ROUND(((SDRFLOSS_VF_DENOM)-(CCH_RFLOSSES))*(DCR_VF_NW_DENOM)*100/DECODE((SDRFLOSS_VF_DENOM)*(CSTCHB_VF_DENOM),0,1,(SDRFLOSS_VF_DENOM)*(CSTCHB_VF_DENOM)),2) HM_CSSR_VF,
+                        ROUND(DECODE((SDRFLOSS_VF_DENOM),0,0,(CCH_RFLOSSES)*100/(SDRFLOSS_VF_DENOM)),2) HM_SDRFLOSS,
+                        ROUND(DECODE((DCR_VF_CELL_DENOM),0,0,(DCR_VF_NUM)*100/(DCR_VF_CELL_DENOM)),2) HM_DCR,
+                        ROUND(DECODE((TCH_TRAFFIC),0,0,(DCR_VF_NUM)/(TCH_TRAFFIC)),2) HM_DROP_PER_ERLANG,
+                        ROUND(DECODE((PHOSUC_VF_DENOM),0,0,(PHOSUC_VF_NUM)*100/(PHOSUC_VF_DENOM)),2) HM_HOSUC_RATE, 
+                     CSSR_VF_DENOM - DCR_VF_NW_DENOM CSSR_FAILURES,
+                     SDCCH_CONG_VF_NUM HM_SD_CONG_COUNT,         
+                     TCH_CONGESTION_VF_NUM*NE_CNT HM_TCH_CONG_COUNT,
+                     CCH_RFLOSSES DROPPED_CALL_FAILS_SDCCH,
+                     DCR_VF_NUM DCR_NUMM,
+                     PHOSUC_VF_DENOM - PHOSUC_VF_NUM HANDOVER_FAILS,
+                     PINHOSUC_VF_DENOM - PINHOSUC_VF_NUM INC_HO_FAILS, 
+                     ROUND(DECODE((PHOSUC_VF_DENOM),0,0,(PHOFAILURE_VF_NUM)*100/(PHOSUC_VF_DENOM)),2) HM_HOFAIL_RATE,
+                     ROUND(DECODE((PINHOSUC_VF_DENOM),0,100,(PINHOSUC_VF_NUM)*100/(PINHOSUC_VF_DENOM)),2) HM_INC_HO_SUC_RATE,
+                     ROUND(DECODE((SDCCHACCSUCC_VF_DENOM),0,0,(SCCHACCSUCC_VF_NUM)*100/(SDCCHACCSUCC_VF_DENOM)),2) HM_SDCCHACC,
+                     ROUND((TCH_MAXBUSY),2) HM_BUSY_TCH_MAX,
+                     ROUND((DLRLCEGTRAFF_VF+ ULRLCEGTRAFF_VF+ DLRLCGTRAFF_VF+ ULRLCGTRAFF_VF),2) HM_TOT_2G_DATA_TRAFF_KB,
+                     ROUND(100-(ROUND(DECODE((PACASSFAILR_VF_DENOM),0,100,(PACASSFAILR_VF_NUM)*100/(PACASSFAILR_VF_DENOM)),2)),2) HM_PS_ASS_FAIL 
+              FROM   NORTHI_DATA.CELLSTS TTT
+             WHERE       DTYPE = 1
+                     AND (FRAGMENT_DATE BETWEEN TRUNC(XDATA_DATE) AND TRUNC(XDATA_DATE)+23/24)
+             ) T1,
+             (
+                SELECT * FROM 
+                (
+                    SELECT   (SELECT   SUB_REGION_NAME
+                            FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST
+                           WHERE   SUB_REGION_ID = TTT.SUB_REGION_ID AND ROWNUM = 1)
+                          SUB_REGION,
+                          FRAGMENT_DATE,
+                         AVG(CSSR_VF_DENOM - DCR_VF_NW_DENOM) CSSR_FAILURES,
+                         AVG(SDCCH_CONG_VF_NUM) HM_SD_CONG_COUNT,         
+                         AVG(TCH_CONGESTION_VF_NUM*NE_CNT) HM_TCH_CONG_COUNT,
+                         AVG(CCH_RFLOSSES) DROPPED_CALL_FAILS_SDCCH,
+                         AVG(DCR_VF_NUM) DCR_NUMM,
+                         AVG(PHOSUC_VF_DENOM - PHOSUC_VF_NUM) HANDOVER_FAILS,
+                         AVG(PINHOSUC_VF_DENOM - PINHOSUC_VF_NUM) INC_HO_FAILS,
+                         AVG(TCH_TRAFFIC) TCH_TRAFFIC,
+                         SUB_REGION_ID,           
+                         ROW_NUMBER() OVER(PARTITION BY SUB_REGION_ID ORDER BY SUM(TCH_TRAFFIC) DESC) RN                                    
+                    FROM   NORTHI_DATA.CELLSTS TTT
+                    WHERE   DTYPE = 1                 
+                         AND (FRAGMENT_DATE BETWEEN TRUNC(XDATA_DATE) AND TRUNC(XDATA_DATE)+23/24)
+                    GROUP BY SUB_REGION_ID, FRAGMENT_DATE
+                )
+                WHERE RN=1 
+             ) T2
+             WHERE T1.FRAGMENT_DATE=T2.FRAGMENT_DATE AND T1.SUB_REGION = T2.SUB_REGION
+             ) TA
+         ) TB
+         )
+        ) X
+        WHERE NETWORK_RANK<51
+        ORDER BY NETWORK_RANK;
+        COMMIT;
+  END;
+  PROCEDURE P_WORST_CELLS_3G (XDATA_DATE DATE)AS 
+  BEGIN
+        DELETE FROM NORTHI_DATA.WORST_CELLS_3G 
+        WHERE FRAGMENT_DATE<TRUNC(SYSDATE)-31; 
+        
+        COMMIT;
+        
+        DELETE FROM NORTHI_DATA.WORST_CELLS_3G 
+        WHERE FRAGMENT_DATE BETWEEN XDATA_DATE AND XDATA_DATE+23/24;
+        
+        COMMIT;
+        INSERT INTO NORTHI_DATA.WORST_CELLS_3G 
+        SELECT X.*,1 TYPE FROM
+        (
+        SELECT SUB_REGION, RNC_NAME, NODEB_NAME, CELL_NAME, FRAGMENT_DATE,
+        ROW_NUMBER() OVER(PARTITION BY SUB_REGION ORDER BY MAIN_RESULT DESC) NETWORK_RANK,
+        ROW_NUMBER() OVER(PARTITION BY SUB_REGION ORDER BY MAIN_RESULT DESC) SUB_REGION_RANK, 
+        ROW_NUMBER() OVER(PARTITION BY RNC_NAME ORDER BY MAIN_RESULT DESC) RNC_RANK, 
+        MAIN_RESULT,ACCESSIBILITY,RETAINABILITY, MOBILITY,
+        VOICE_ATTEMPT,DATA_ATTEMPT,CS_VOICE_CALL_TRAFFIC,CS_VIDEO_CALL_TRAFF,TOT_3G_TRAF_MB,CE_CONG_DL,CE_CONG_UL,RRC_EST_FAILURE_R,RAB_EST_FAILURE_R_VOICE,RAB_EST_FAILURE_R_PS,
+        VOICE_DROP_RATE,PS_DROP_RATE,INTER_FREQ_HO_FR,IRAT_HANDOVER_FAILURE_R_VOICE,IRAT_HANDOVER_FAILURE_R_PS,
+        RRC_EST_FAILURE_C,RAB_EST_FAILURE_VOICE_C,RAB_EST_FAILURE_PS_C,VOICE_DROP_C,PS_DROP_C,INTER_FREQ_HO_FR_NUM_C,IRAT_HANDOVER_FAILURE_VOICE_C,IRAT_HANDOVER_FAILURE_PS_C,
+        RRC_EST_FAILURE_A,RAB_EST_FAILURE_VOICE_A,RAB_EST_FAILURE_PS_A,VOICE_DROP_A, PS_DROP_A, INTER_FREQ_HO_FR_NUM_A,IRAT_HANDOVER_FAILURE_VOICE_A,IRAT_HANDOVER_FAILURE_PS_A,
+        RRC_EST_FAILURE,RAB_EST_FAILURE_VOICE,RAB_EST_FAILURE_PS,VOICE_DROP,PS_DROP,INTER_FREQ_HO_FR_NUM, IRAT_HANDOVER_FAILURE_VOICE,IRAT_HANDOVER_FAILURE_PS
+        FROM
+        (
+        SELECT TB.SUB_REGION,TB.RNC_NAME, TB.NODEB_NAME, TB.CELL_NAME, TRUNC(XDATA_DATE) FRAGMENT_DATE,
+        ROUND(0.3* ACCESSIBILITY + 0.5*RETAINABILITY + 0.2*MOBILITY,2) MAIN_RESULT,  
+        ROUND(TB.ACCESSIBILITY,2) ACCESSIBILITY,
+        ROUND(TB.RETAINABILITY,2) RETAINABILITY,
+        ROUND(TB.MOBILITY,2) MOBILITY,
+
+        ROUND(TB.VOICE_ATTEMPT,2) VOICE_ATTEMPT, 
+        ROUND(TB.DATA_ATTEMPT,2) DATA_ATTEMPT,
+        ROUND(TB.CS_VOICE_CALL_TRAFFIC,2) CS_VOICE_CALL_TRAFFIC,
+        ROUND(TB.CS_VIDEO_CALL_TRAFF,2) CS_VIDEO_CALL_TRAFF,
+        ROUND(TB.TOT_3G_TRAF_MB,2) TOT_3G_TRAF_MB,
+        ROUND(TB.CE_CONG_DL,2) CE_CONG_DL,
+        ROUND(TB.CE_CONG_UL,2) CE_CONG_UL,         
+        ROUND(TB.RRC_EST_FAILURE_R,2) RRC_EST_FAILURE_R,
+        ROUND(TB.RAB_EST_FAILURE_R_VOICE,2) RAB_EST_FAILURE_R_VOICE,
+        ROUND(TB.RAB_EST_FAILURE_R_PS,2) RAB_EST_FAILURE_R_PS,
+        ROUND(TB.VOICE_DROP_RATE,2) VOICE_DROP_RATE,
+        ROUND(TB.PS_DROP_RATE,2) PS_DROP_RATE,
+        ROUND(TB.INTER_FREQ_HO_FR,2) INTER_FREQ_HO_FR,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_R_VOICE,2) IRAT_HANDOVER_FAILURE_R_VOICE,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_R_PS,2) IRAT_HANDOVER_FAILURE_R_PS,   
+                 
+
+        ROUND(TB.RRC_EST_FAILURE_C,2) RRC_EST_FAILURE_C,
+        ROUND(TB.RAB_EST_FAILURE_VOICE_C,2) RAB_EST_FAILURE_VOICE_C,
+        ROUND(TB.RAB_EST_FAILURE_PS_C,2) RAB_EST_FAILURE_PS_C,
+        ROUND(TB.VOICE_DROP_C,2) VOICE_DROP_C,
+        ROUND(TB.PS_DROP_C,2) PS_DROP_C,
+        ROUND(TB.INTER_FREQ_HO_FR_NUM_C,2) INTER_FREQ_HO_FR_NUM_C,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_VOICE_C,2) IRAT_HANDOVER_FAILURE_VOICE_C,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_PS_C,2) IRAT_HANDOVER_FAILURE_PS_C,
+
+
+        ROUND(TB.RRC_EST_FAILURE_A,2) RRC_EST_FAILURE_A,
+        ROUND(TB.RAB_EST_FAILURE_VOICE_A,2) RAB_EST_FAILURE_VOICE_A,
+        ROUND(TB.RAB_EST_FAILURE_PS_A,2) RAB_EST_FAILURE_PS_A,
+        ROUND(TB.VOICE_DROP_A,2) VOICE_DROP_A,
+        ROUND(TB.PS_DROP_A,2) PS_DROP_A,
+        ROUND(TB.INTER_FREQ_HO_FR_NUM_A,2) INTER_FREQ_HO_FR_NUM_A,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_VOICE_A,2) IRAT_HANDOVER_FAILURE_VOICE_A,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_PS_A,2) IRAT_HANDOVER_FAILURE_PS_A,
+
+        ROUND(TB.RRC_EST_FAILURE,2) RRC_EST_FAILURE,
+        ROUND(TB.RAB_EST_FAILURE_VOICE,2) RAB_EST_FAILURE_VOICE,
+        ROUND(TB.RAB_EST_FAILURE_PS,2) RAB_EST_FAILURE_PS,
+        ROUND(TB.VOICE_DROP,2) VOICE_DROP,
+        ROUND(TB.PS_DROP,2) PS_DROP,
+        ROUND(TB.INTER_FREQ_HO_FR_NUM,2) INTER_FREQ_HO_FR_NUM,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_VOICE,2) IRAT_HANDOVER_FAILURE_VOICE,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_PS,2) IRAT_HANDOVER_FAILURE_PS
+
+        FROM
+        (
+            SELECT TA.*, 0.05*GREATEST(0,RRC_EST_FAILURE) + 0.75*GREATEST(0,RAB_EST_FAILURE_VOICE) + 0.2*GREATEST(0,RAB_EST_FAILURE_PS)  ACCESSIBILITY, 
+            0.6* GREATEST(0,VOICE_DROP) + 0.4*GREATEST(0,PS_DROP)  RETAINABILITY,
+            0.2* GREATEST(0,INTER_FREQ_HO_FR_NUM) + 0.4*GREATEST(0,IRAT_HANDOVER_FAILURE_VOICE) + 0.4*GREATEST(0,IRAT_HANDOVER_FAILURE_PS) MOBILITY 
+            FROM
+            (
+                SELECT
+                 T1.SUB_REGION,
+                 T1.RNC_NAME,
+                 T1.NODEB_NAME,
+                 T1.CELL_NAME, 
+                 ROUND(T1.VOICE_ATTEMPT,2) VOICE_ATTEMPT, 
+                 ROUND(T1.DATA_ATTEMPT,2) DATA_ATTEMPT,
+                 ROUND(T1.CS_VOICE_CALL_TRAFFIC,2) CS_VOICE_CALL_TRAFFIC,
+                 ROUND(T1.CS_VIDEO_CALL_TRAFF,2) CS_VIDEO_CALL_TRAFF,
+                 ROUND(T1.TOT_3G_TRAF_MB,2) TOT_3G_TRAF_MB,
+                 ROUND(T1.CE_CONG_DL,2) CE_CONG_DL,
+                 ROUND(T1.CE_CONG_UL,2) CE_CONG_UL,
+                 ROUND(T1.RRC_EST_FAILURE_R,2) RRC_EST_FAILURE_R,
+                 ROUND(T1.RAB_EST_FAILURE_R_VOICE,2) RAB_EST_FAILURE_R_VOICE,
+                 ROUND(T1.RAB_EST_FAILURE_R_PS,2) RAB_EST_FAILURE_R_PS,
+                 ROUND(T1.VOICE_DROP_RATE,2) VOICE_DROP_RATE,
+                 ROUND(T1.PS_DROP_RATE,2) PS_DROP_RATE,
+                 ROUND(T1.INTER_FREQ_HO_FR,2) INTER_FREQ_HO_FR,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_R_VOICE,2) IRAT_HANDOVER_FAILURE_R_VOICE,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_R_PS,2) IRAT_HANDOVER_FAILURE_R_PS,   
+                 ROUND(T1.RRC_EST_FAILURE,2) RRC_EST_FAILURE_C, 
+                 ROUND(T1.RAB_EST_FAILURE_VOICE,2) RAB_EST_FAILURE_VOICE_C,
+                 ROUND(T1.RAB_EST_FAILURE_PS,2) RAB_EST_FAILURE_PS_C,
+                 ROUND(T1.VOICE_DROP,2) VOICE_DROP_C,
+                 ROUND(T1.PS_DROP,2) PS_DROP_C,
+                 ROUND(T1.INTER_FREQ_HO_FR_NUM,2) INTER_FREQ_HO_FR_NUM_C,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_VOICE,2) IRAT_HANDOVER_FAILURE_VOICE_C,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_PS,2) IRAT_HANDOVER_FAILURE_PS_C,
+                 ROUND(T2.RRC_EST_FAILURE,2) RRC_EST_FAILURE_A, 
+                 ROUND(T2.RAB_EST_FAILURE_VOICE,2) RAB_EST_FAILURE_VOICE_A,
+                 ROUND(T2.RAB_EST_FAILURE_PS,2) RAB_EST_FAILURE_PS_A,
+                 ROUND(T2.VOICE_DROP,2) VOICE_DROP_A,
+                 ROUND(T2.PS_DROP,2) PS_DROP_A,
+                 ROUND(T2.INTER_FREQ_HO_FR_NUM,2) INTER_FREQ_HO_FR_NUM_A,
+                 ROUND(T2.IRAT_HANDOVER_FAILURE_VOICE,2) IRAT_HANDOVER_FAILURE_VOICE_A,
+                 ROUND(T2.IRAT_HANDOVER_FAILURE_PS,2) IRAT_HANDOVER_FAILURE_PS_A,
+                 ROUND(T1.RRC_EST_FAILURE-T2.RRC_EST_FAILURE,2) RRC_EST_FAILURE, 
+                 ROUND(T1.RAB_EST_FAILURE_VOICE-T2.RAB_EST_FAILURE_VOICE,2) RAB_EST_FAILURE_VOICE,
+                 ROUND(T1.RAB_EST_FAILURE_PS-T2.RAB_EST_FAILURE_PS,2) RAB_EST_FAILURE_PS,
+                 ROUND(T1.VOICE_DROP-T2.VOICE_DROP,2) VOICE_DROP,
+                 ROUND(T1.PS_DROP-T2.PS_DROP,2) PS_DROP,
+                 ROUND(T1.INTER_FREQ_HO_FR_NUM-T2.INTER_FREQ_HO_FR_NUM,2) INTER_FREQ_HO_FR_NUM,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_VOICE-T2.IRAT_HANDOVER_FAILURE_VOICE,2) IRAT_HANDOVER_FAILURE_VOICE,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_PS-T2.IRAT_HANDOVER_FAILURE_PS,2) IRAT_HANDOVER_FAILURE_PS
+                FROM
+                (
+                    SELECT  
+                    (SELECT  T1.SUB_REGION_NAME   FROM  NORTHI_DATA.LIST_RNC_NODEB_CELL T1 WHERE   T1.CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)   SUB_REGION,
+                    (SELECT   RNC_NAME
+                    FROM   NORTHI_DATA.LIST_RNC_NODEB_CELL
+                    WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                    RNC_NAME,
+                    (SELECT   NODEB_NAME
+                    FROM   NORTHI_DATA.LIST_RNC_NODEB_CELL
+                   WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                    NODEB_NAME,
+                    (SELECT   CELL_NAME
+                    FROM   NORTHI_DATA.LIST_RNC_NODEB_CELL
+                   WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                    CELL_NAME,
+                         RNC_ID,
+                 ROUND ( (VOICE_ATTEMPT), 2) VOICE_ATTEMPT,
+                 ROUND ( (DATA_ATTEMPT), 2) DATA_ATTEMPT,
+                 ROUND ( (CS_VOICE_CALL_TRAFF) / 2, 2) CS_VOICE_CALL_TRAFFIC,
+                 ROUND ( (CS_VIDEO_CALL_TRAFF) / 2, 2) CS_VIDEO_CALL_TRAFF,
+                 ROUND ((  ( (PS_DL_DATA) / 8 / (1024 * 1024))+ ( (PS_UL_DATA) / 8 / (1024 * 1024))+ ( (TRAF_HSUPA) / (1024 * 1024))+ ( (TRAF_HSDPA) / (1024 * 1024))),2)TOT_3G_TRAF_MB,
+                 ROUND (DECODE ( (ATTEMPT), 0, 0, (CE_CONG_DL) / (ATTEMPT)), 2)    CE_CONG_DL,
+                 ROUND (DECODE ( (ATTEMPT), 0, 0, (CE_CONG_UL) / (ATTEMPT)), 2)    CE_CONG_UL,
+                DECODE(ATTEMPT, 0,0, 100*(ATTEMPT - RRC_SUCCCONNESTAB)/ATTEMPT)  RRC_EST_FAILURE_R,
+                DECODE(VOICE_RAB_EST_F_R_DEN,0,0, 100*(VOICE_RAB_EST_F_R_DEN- VOICE_RAB_EST_F_R_NUM)/VOICE_RAB_EST_F_R_DEN) RAB_EST_FAILURE_R_VOICE,
+                DECODE(DATA_ATTEMPT, 0,0, 100*(DATA_ATTEMPT - PS_RAB_EST_F_R_NUM)/DATA_ATTEMPT) RAB_EST_FAILURE_R_PS,        
+                ROUND(DECODE((VOICE_RAB_ABN_REL_R_DEN),0,0,((VOICE_RAB_ABN_REL_R_NUM)/(VOICE_RAB_ABN_REL_R_DEN)) *100),2) VOICE_DROP_RATE,
+                ROUND(DECODE((PS_RAB_ABN_REL_R_DEN),0,0,((PS_RAB_ABN_REL_R_NUM))/((PS_RAB_ABN_REL_R_DEN))*100),2) PS_DROP_RATE,
+                ROUND(DECODE((INTER_FREQ_HO_FR_DEN),0,0,((INTER_FREQ_HO_FR_NUM)/(INTER_FREQ_HO_FR_DEN)) *100),2) INTER_FREQ_HO_FR,
+                ROUND(DECODE((OG_CS_IRATHO_F_R_DEN),0,0,(1-((OG_CS_IRATHO_F_R_NUM)/(OG_CS_IRATHO_F_R_DEN))) * 100),2) IRAT_HANDOVER_FAILURE_R_VOICE,
+                ROUND(DECODE((OG_PS_IRAT_C_C_F_R_DEN),0,0,(1-((OG_PS_IRAT_C_C_F_R_NUM)/(OG_PS_IRAT_C_C_F_R_DEN)))*100),2) IRAT_HANDOVER_FAILURE_R_PS,
+                 ATTEMPT - RRC_SUCCCONNESTAB  RRC_EST_FAILURE,
+                 VOICE_RAB_EST_F_R_DEN - VOICE_RAB_EST_F_R_NUM RAB_EST_FAILURE_VOICE,
+                 DATA_ATTEMPT - PS_RAB_EST_F_R_NUM RAB_EST_FAILURE_PS,
+                 VOICE_RAB_ABN_REL_R_NUM VOICE_DROP,
+                 PS_RAB_ABN_REL_R_NUM PS_DROP,
+                 INTER_FREQ_HO_FR_NUM,
+                 OG_CS_IRATHO_F_R_DEN - OG_CS_IRATHO_F_R_NUM IRAT_HANDOVER_FAILURE_VOICE,
+                 OG_PS_IRAT_C_C_F_R_DEN - OG_PS_IRAT_C_C_F_R_NUM IRAT_HANDOVER_FAILURE_PS
+                  FROM   NORTHI_DATA.CELL_STATISTICS_DA TTT
+                 WHERE   DTYPE = 1
+                         AND (FRAGMENT_DATE=TRUNC(XDATA_DATE))
+                 ) T1,
+                 (
+                    SELECT   (SELECT   NE_NAME
+                            FROM  NORTHI_DATA.LIST_RNC
+                           WHERE   NE_ID = TTT.RNC_ID AND ROWNUM = 1)
+                         RNC_NAME,
+                         RNC_ID,
+                         AVG(ATTEMPT - RRC_SUCCCONNESTAB)  RRC_EST_FAILURE,
+                         AVG(VOICE_RAB_EST_F_R_DEN - VOICE_RAB_EST_F_R_NUM) RAB_EST_FAILURE_VOICE,
+                         AVG(DATA_ATTEMPT - PS_RAB_EST_F_R_NUM) RAB_EST_FAILURE_PS,
+                         AVG(VOICE_RAB_ABN_REL_R_NUM) VOICE_DROP,
+                         AVG(PS_RAB_ABN_REL_R_NUM) PS_DROP,
+                         AVG(INTER_FREQ_HO_FR_NUM) INTER_FREQ_HO_FR_NUM,
+                         AVG(OG_CS_IRATHO_F_R_DEN - OG_CS_IRATHO_F_R_NUM) IRAT_HANDOVER_FAILURE_VOICE,
+                         AVG(OG_PS_IRAT_C_C_F_R_DEN - OG_PS_IRAT_C_C_F_R_NUM) IRAT_HANDOVER_FAILURE_PS                 
+                    FROM   NORTHI_DATA.CELL_STATISTICS_DA TTT
+                    WHERE       DTYPE = 1
+                         AND (FRAGMENT_DATE=TRUNC(XDATA_DATE))
+                    GROUP BY RNC_ID
+                 ) T2
+                 
+                 WHERE T1.RNC_NAME = T2.RNC_NAME
+             ) TA
+         ) TB
+         )
+        ) X
+        WHERE NETWORK_RANK<51
+        ORDER BY NETWORK_RANK;
+        COMMIT;
+        
+        INSERT INTO NORTHI_DATA.WORST_CELLS_3G 
+        SELECT X.*,2 TYPE FROM(
+        SELECT SUB_REGION, RNC_NAME, NODEB_NAME, CELL_NAME, FRAGMENT_DATE,
+        ROW_NUMBER() OVER(PARTITION BY SUB_REGION ORDER BY MAIN_RESULT DESC) NETWORK_RANK,
+        ROW_NUMBER() OVER(PARTITION BY SUB_REGION ORDER BY MAIN_RESULT DESC) SUB_REGION_RANK, 
+        ROW_NUMBER() OVER(PARTITION BY RNC_NAME ORDER BY MAIN_RESULT DESC) RNC_RANK, 
+        MAIN_RESULT,ACCESSIBILITY,RETAINABILITY, MOBILITY,
+        VOICE_ATTEMPT,DATA_ATTEMPT,CS_VOICE_CALL_TRAFFIC,CS_VIDEO_CALL_TRAFF,TOT_3G_TRAF_MB,CE_CONG_DL,CE_CONG_UL,RRC_EST_FAILURE_R,RAB_EST_FAILURE_R_VOICE,RAB_EST_FAILURE_R_PS,
+        VOICE_DROP_RATE,PS_DROP_RATE,INTER_FREQ_HO_FR,IRAT_HANDOVER_FAILURE_R_VOICE,IRAT_HANDOVER_FAILURE_R_PS,
+        RRC_EST_FAILURE_C,RAB_EST_FAILURE_VOICE_C,RAB_EST_FAILURE_PS_C,VOICE_DROP_C,PS_DROP_C,INTER_FREQ_HO_FR_NUM_C,IRAT_HANDOVER_FAILURE_VOICE_C,IRAT_HANDOVER_FAILURE_PS_C,
+        RRC_EST_FAILURE_A,RAB_EST_FAILURE_VOICE_A,RAB_EST_FAILURE_PS_A,VOICE_DROP_A, PS_DROP_A, INTER_FREQ_HO_FR_NUM_A,IRAT_HANDOVER_FAILURE_VOICE_A,IRAT_HANDOVER_FAILURE_PS_A,
+        RRC_EST_FAILURE,RAB_EST_FAILURE_VOICE,RAB_EST_FAILURE_PS,VOICE_DROP,PS_DROP,INTER_FREQ_HO_FR_NUM, IRAT_HANDOVER_FAILURE_VOICE,IRAT_HANDOVER_FAILURE_PS
+        FROM
+        (
+        SELECT TB.SUB_REGION,TB.RNC_NAME, TB.NODEB_NAME, TB.CELL_NAME, TRUNC(XDATA_DATE) FRAGMENT_DATE,
+        ROUND(0.3* ACCESSIBILITY + 0.5*RETAINABILITY + 0.2*MOBILITY,2) MAIN_RESULT,  
+        ROUND(TB.ACCESSIBILITY,2) ACCESSIBILITY,
+        ROUND(TB.RETAINABILITY,2) RETAINABILITY,
+        ROUND(TB.MOBILITY,2) MOBILITY,
+        ROUND(TB.VOICE_ATTEMPT,2) VOICE_ATTEMPT, 
+        ROUND(TB.DATA_ATTEMPT,2) DATA_ATTEMPT,
+        ROUND(TB.CS_VOICE_CALL_TRAFFIC,2) CS_VOICE_CALL_TRAFFIC,
+        ROUND(TB.CS_VIDEO_CALL_TRAFF,2) CS_VIDEO_CALL_TRAFF,
+        ROUND(TB.TOT_3G_TRAF_MB,2) TOT_3G_TRAF_MB,
+        ROUND(TB.CE_CONG_DL,2) CE_CONG_DL,
+        ROUND(TB.CE_CONG_UL,2) CE_CONG_UL,         
+        ROUND(TB.RRC_EST_FAILURE_R,2) RRC_EST_FAILURE_R,
+        ROUND(TB.RAB_EST_FAILURE_R_VOICE,2) RAB_EST_FAILURE_R_VOICE,
+        ROUND(TB.RAB_EST_FAILURE_R_PS,2) RAB_EST_FAILURE_R_PS,
+        ROUND(TB.VOICE_DROP_RATE,2) VOICE_DROP_RATE,
+        ROUND(TB.PS_DROP_RATE,2) PS_DROP_RATE,
+        ROUND(TB.INTER_FREQ_HO_FR,2) INTER_FREQ_HO_FR,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_R_VOICE,2) IRAT_HANDOVER_FAILURE_R_VOICE,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_R_PS,2) IRAT_HANDOVER_FAILURE_R_PS,   
+        ROUND(TB.RRC_EST_FAILURE_C,2) RRC_EST_FAILURE_C,
+        ROUND(TB.RAB_EST_FAILURE_VOICE_C,2) RAB_EST_FAILURE_VOICE_C,
+        ROUND(TB.RAB_EST_FAILURE_PS_C,2) RAB_EST_FAILURE_PS_C,
+        ROUND(TB.VOICE_DROP_C,2) VOICE_DROP_C,
+        ROUND(TB.PS_DROP_C,2) PS_DROP_C,
+        ROUND(TB.INTER_FREQ_HO_FR_NUM_C,2) INTER_FREQ_HO_FR_NUM_C,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_VOICE_C,2) IRAT_HANDOVER_FAILURE_VOICE_C,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_PS_C,2) IRAT_HANDOVER_FAILURE_PS_C,
+        ROUND(TB.RRC_EST_FAILURE_A,2) RRC_EST_FAILURE_A,
+        ROUND(TB.RAB_EST_FAILURE_VOICE_A,2) RAB_EST_FAILURE_VOICE_A,
+        ROUND(TB.RAB_EST_FAILURE_PS_A,2) RAB_EST_FAILURE_PS_A,
+        ROUND(TB.VOICE_DROP_A,2) VOICE_DROP_A,
+        ROUND(TB.PS_DROP_A,2) PS_DROP_A,
+        ROUND(TB.INTER_FREQ_HO_FR_NUM_A,2) INTER_FREQ_HO_FR_NUM_A,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_VOICE_A,2) IRAT_HANDOVER_FAILURE_VOICE_A,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_PS_A,2) IRAT_HANDOVER_FAILURE_PS_A,
+        ROUND(TB.RRC_EST_FAILURE,2) RRC_EST_FAILURE,
+        ROUND(TB.RAB_EST_FAILURE_VOICE,2) RAB_EST_FAILURE_VOICE,
+        ROUND(TB.RAB_EST_FAILURE_PS,2) RAB_EST_FAILURE_PS,
+        ROUND(TB.VOICE_DROP,2) VOICE_DROP,
+        ROUND(TB.PS_DROP,2) PS_DROP,
+        ROUND(TB.INTER_FREQ_HO_FR_NUM,2) INTER_FREQ_HO_FR_NUM,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_VOICE,2) IRAT_HANDOVER_FAILURE_VOICE,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_PS,2) IRAT_HANDOVER_FAILURE_PS      
+        FROM
+        (
+            SELECT TA.*, 0.05*GREATEST(0,RRC_EST_FAILURE) + 0.75*GREATEST(0,RAB_EST_FAILURE_VOICE) + 0.2*GREATEST(0,RAB_EST_FAILURE_PS)  ACCESSIBILITY, 
+            0.6* GREATEST(0,VOICE_DROP) + 0.4*GREATEST(0,PS_DROP)  RETAINABILITY,
+            0.2* GREATEST(0,INTER_FREQ_HO_FR_NUM) + 0.4*GREATEST(0,IRAT_HANDOVER_FAILURE_VOICE) + 0.4*GREATEST(0,IRAT_HANDOVER_FAILURE_PS) MOBILITY 
+            FROM
+            (
+               SELECT 
+                 T1.SUB_REGION,
+                 T1.RNC_NAME,
+                 T1.NODEB_NAME,
+                 T1.CELL_NAME, 
+                 ROUND(T1.VOICE_ATTEMPT,2) VOICE_ATTEMPT, 
+                 ROUND(T1.DATA_ATTEMPT,2) DATA_ATTEMPT,
+                 ROUND(T1.CS_VOICE_CALL_TRAFFIC,2) CS_VOICE_CALL_TRAFFIC,
+                 ROUND(T1.CS_VIDEO_CALL_TRAFF,2) CS_VIDEO_CALL_TRAFF,
+                 ROUND(T1.TOT_3G_TRAF_MB,2) TOT_3G_TRAF_MB,
+                 ROUND(T1.CE_CONG_DL,2) CE_CONG_DL,
+                 ROUND(T1.CE_CONG_UL,2) CE_CONG_UL,
+                 ROUND(T1.RRC_EST_FAILURE_R,2) RRC_EST_FAILURE_R,
+                 ROUND(T1.RAB_EST_FAILURE_R_VOICE,2) RAB_EST_FAILURE_R_VOICE,
+                 ROUND(T1.RAB_EST_FAILURE_R_PS,2) RAB_EST_FAILURE_R_PS,
+                 ROUND(T1.VOICE_DROP_RATE,2) VOICE_DROP_RATE,
+                 ROUND(T1.PS_DROP_RATE,2) PS_DROP_RATE,
+                 ROUND(T1.INTER_FREQ_HO_FR,2) INTER_FREQ_HO_FR,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_R_VOICE,2) IRAT_HANDOVER_FAILURE_R_VOICE,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_R_PS,2) IRAT_HANDOVER_FAILURE_R_PS,   
+                 ROUND(T1.RRC_EST_FAILURE,2) RRC_EST_FAILURE_C, 
+                 ROUND(T1.RAB_EST_FAILURE_VOICE,2) RAB_EST_FAILURE_VOICE_C,
+                 ROUND(T1.RAB_EST_FAILURE_PS,2) RAB_EST_FAILURE_PS_C,
+                 ROUND(T1.VOICE_DROP,2) VOICE_DROP_C,
+                 ROUND(T1.PS_DROP,2) PS_DROP_C,
+                 ROUND(T1.INTER_FREQ_HO_FR_NUM,2) INTER_FREQ_HO_FR_NUM_C,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_VOICE,2) IRAT_HANDOVER_FAILURE_VOICE_C,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_PS,2) IRAT_HANDOVER_FAILURE_PS_C,
+                 ROUND(T2.RRC_EST_FAILURE,2) RRC_EST_FAILURE_A, 
+                 ROUND(T2.RAB_EST_FAILURE_VOICE,2) RAB_EST_FAILURE_VOICE_A,
+                 ROUND(T2.RAB_EST_FAILURE_PS,2) RAB_EST_FAILURE_PS_A,
+                 ROUND(T2.VOICE_DROP,2) VOICE_DROP_A,
+                 ROUND(T2.PS_DROP,2) PS_DROP_A,
+                 ROUND(T2.INTER_FREQ_HO_FR_NUM,2) INTER_FREQ_HO_FR_NUM_A,
+                 ROUND(T2.IRAT_HANDOVER_FAILURE_VOICE,2) IRAT_HANDOVER_FAILURE_VOICE_A,
+                 ROUND(T2.IRAT_HANDOVER_FAILURE_PS,2) IRAT_HANDOVER_FAILURE_PS_A,
+                 ROUND(T1.RRC_EST_FAILURE-T2.RRC_EST_FAILURE,2) RRC_EST_FAILURE, 
+                 ROUND(T1.RAB_EST_FAILURE_VOICE-T2.RAB_EST_FAILURE_VOICE,2) RAB_EST_FAILURE_VOICE,
+                 ROUND(T1.RAB_EST_FAILURE_PS-T2.RAB_EST_FAILURE_PS,2) RAB_EST_FAILURE_PS,
+                 ROUND(T1.VOICE_DROP-T2.VOICE_DROP,2) VOICE_DROP,
+                 ROUND(T1.PS_DROP-T2.PS_DROP,2) PS_DROP,
+                 ROUND(T1.INTER_FREQ_HO_FR_NUM-T2.INTER_FREQ_HO_FR_NUM,2) INTER_FREQ_HO_FR_NUM,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_VOICE-T2.IRAT_HANDOVER_FAILURE_VOICE,2) IRAT_HANDOVER_FAILURE_VOICE,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_PS-T2.IRAT_HANDOVER_FAILURE_PS,2) IRAT_HANDOVER_FAILURE_PS
+            FROM
+            (
+                SELECT   
+                  (SELECT  T1.SUB_REGION_NAME   FROM  NORTHI_DATA.LIST_RNC_NODEB_CELL T1 WHERE   T1.CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)   SUB_REGION,
+                    (SELECT   RNC_NAME
+                    FROM   NORTHI_DATA.LIST_RNC_NODEB_CELL
+                    WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                    RNC_NAME,
+                    (SELECT   NODEB_NAME
+                    FROM   NORTHI_DATA.LIST_RNC_NODEB_CELL
+                   WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                    NODEB_NAME,
+                    (SELECT   CELL_NAME
+                    FROM   NORTHI_DATA.LIST_RNC_NODEB_CELL
+                   WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                    CELL_NAME,
+                 RNC_ID,
+                 FRAGMENT_DATE,
+                 ROUND ( (VOICE_ATTEMPT), 2) VOICE_ATTEMPT,
+                 ROUND ( (DATA_ATTEMPT), 2) DATA_ATTEMPT,
+                 ROUND ( (CS_VOICE_CALL_TRAFF) / 2, 2) CS_VOICE_CALL_TRAFFIC,
+                 ROUND ( (CS_VIDEO_CALL_TRAFF) / 2, 2) CS_VIDEO_CALL_TRAFF,
+                 ROUND ( (  ( (PS_DL_DATA) / 8 / (1024 * 1024))+ ( (PS_UL_DATA) / 8 / (1024 * 1024)) + ( (TRAF_HSUPA) / (1024 * 1024))+ ( (TRAF_HSDPA) / (1024 * 1024))),2) TOT_3G_TRAF_MB,
+                 ROUND (DECODE ( (ATTEMPT), 0, 0, (CE_CONG_DL) / (ATTEMPT)), 2)    CE_CONG_DL,
+                 ROUND (DECODE ( (ATTEMPT), 0, 0, (CE_CONG_UL) / (ATTEMPT)), 2)    CE_CONG_UL,
+                DECODE(ATTEMPT, 0,0, 100*(ATTEMPT - RRC_SUCCCONNESTAB)/ATTEMPT)  RRC_EST_FAILURE_R,
+                DECODE(VOICE_RAB_EST_F_R_DEN,0,0, 100*(VOICE_RAB_EST_F_R_DEN- VOICE_RAB_EST_F_R_NUM)/VOICE_RAB_EST_F_R_DEN) RAB_EST_FAILURE_R_VOICE,
+                DECODE(DATA_ATTEMPT, 0,0, 100*(DATA_ATTEMPT - PS_RAB_EST_F_R_NUM)/DATA_ATTEMPT) RAB_EST_FAILURE_R_PS,           
+                ROUND(DECODE((VOICE_RAB_ABN_REL_R_DEN),0,0,((VOICE_RAB_ABN_REL_R_NUM)/(VOICE_RAB_ABN_REL_R_DEN)) *100),2) VOICE_DROP_RATE,
+                ROUND(DECODE((PS_RAB_ABN_REL_R_DEN),0,0,((PS_RAB_ABN_REL_R_NUM))/((PS_RAB_ABN_REL_R_DEN))*100),2) PS_DROP_RATE,
+                ROUND(DECODE((INTER_FREQ_HO_FR_DEN),0,0,((INTER_FREQ_HO_FR_NUM)/(INTER_FREQ_HO_FR_DEN)) *100),2) INTER_FREQ_HO_FR,
+                ROUND(DECODE((OG_CS_IRATHO_F_R_DEN),0,0,(1-((OG_CS_IRATHO_F_R_NUM)/(OG_CS_IRATHO_F_R_DEN))) * 100),2) IRAT_HANDOVER_FAILURE_R_VOICE,
+                ROUND(DECODE((OG_PS_IRAT_C_C_F_R_DEN),0,0,(1-((OG_PS_IRAT_C_C_F_R_NUM)/(OG_PS_IRAT_C_C_F_R_DEN)))*100),2) IRAT_HANDOVER_FAILURE_R_PS,
+                 ATTEMPT - RRC_SUCCCONNESTAB  RRC_EST_FAILURE,
+                 VOICE_RAB_EST_F_R_DEN - VOICE_RAB_EST_F_R_NUM RAB_EST_FAILURE_VOICE,
+                 DATA_ATTEMPT - PS_RAB_EST_F_R_NUM RAB_EST_FAILURE_PS,
+                 VOICE_RAB_ABN_REL_R_NUM VOICE_DROP,
+                 PS_RAB_ABN_REL_R_NUM PS_DROP,
+                 INTER_FREQ_HO_FR_NUM,
+                 OG_CS_IRATHO_F_R_DEN - OG_CS_IRATHO_F_R_NUM IRAT_HANDOVER_FAILURE_VOICE,
+                 OG_PS_IRAT_C_C_F_R_DEN - OG_PS_IRAT_C_C_F_R_NUM IRAT_HANDOVER_FAILURE_PS
+              FROM   NORTHI_DATA.CELL_STATISTICS TTT
+             WHERE       DTYPE = 1
+                     AND (FRAGMENT_DATE BETWEEN TRUNC(XDATA_DATE) AND TRUNC(XDATA_DATE)+23/24)
+             ) T1,
+             (
+               SELECT * FROM 
+                (
+                    SELECT  (SELECT   NE_NAME
+                            FROM   NORTHI_DATA.LIST_RNC
+                           WHERE   NE_ID = TTT.RNC_ID AND ROWNUM = 1)
+                         RNC_NAME,
+                     FRAGMENT_DATE,
+                     AVG(ATTEMPT - RRC_SUCCCONNESTAB)  RRC_EST_FAILURE,
+                     AVG(VOICE_RAB_EST_F_R_DEN - VOICE_RAB_EST_F_R_NUM) RAB_EST_FAILURE_VOICE,
+                     AVG(DATA_ATTEMPT - PS_RAB_EST_F_R_NUM) RAB_EST_FAILURE_PS,
+                     AVG(VOICE_RAB_ABN_REL_R_NUM) VOICE_DROP,
+                     AVG(PS_RAB_ABN_REL_R_NUM) PS_DROP,
+                     AVG(INTER_FREQ_HO_FR_NUM) INTER_FREQ_HO_FR_NUM,
+                     AVG(OG_CS_IRATHO_F_R_DEN - OG_CS_IRATHO_F_R_NUM) IRAT_HANDOVER_FAILURE_VOICE,
+                     AVG(OG_PS_IRAT_C_C_F_R_DEN - OG_PS_IRAT_C_C_F_R_NUM) IRAT_HANDOVER_FAILURE_PS, 
+                     RNC_ID,           
+                     ROW_NUMBER() OVER(PARTITION BY RNC_ID ORDER BY SUM(CS_VIDEO_CALL_TRAFF+CS_VOICE_CALL_TRAFF) DESC) RN                                    
+                    FROM   NORTHI_DATA.CELL_STATISTICS TTT
+                    WHERE   DTYPE = 1
+                         AND (FRAGMENT_DATE BETWEEN TRUNC(XDATA_DATE) AND TRUNC(XDATA_DATE)+23/24)
+                    GROUP BY RNC_ID, FRAGMENT_DATE
+                )
+                WHERE RN=1         
+             ) T2
+             WHERE T1.RNC_NAME = T2.RNC_NAME AND T1.FRAGMENT_DATE=T2.FRAGMENT_DATE
+             ) TA
+         ) TB
+        ) 
+        )X
+        WHERE NETWORK_RANK<51
+        ORDER BY NETWORK_RANK;
+        COMMIT;
+        
+        INSERT INTO NORTHI_DATA.WORST_CELLS_3G 
+        SELECT X.*,3 TYPE FROM
+        (
+        SELECT SUB_REGION, RNC_NAME, NODEB_NAME, CELL_NAME, FRAGMENT_DATE,
+        ROW_NUMBER() OVER(PARTITION BY SUB_REGION ORDER BY MAIN_RESULT DESC) NETWORK_RANK,
+        ROW_NUMBER() OVER(PARTITION BY SUB_REGION ORDER BY MAIN_RESULT DESC) SUB_REGION_RANK, 
+        ROW_NUMBER() OVER(PARTITION BY RNC_NAME ORDER BY MAIN_RESULT DESC) RNC_RANK, 
+        MAIN_RESULT,ACCESSIBILITY,RETAINABILITY, MOBILITY,
+        VOICE_ATTEMPT,DATA_ATTEMPT,CS_VOICE_CALL_TRAFFIC,CS_VIDEO_CALL_TRAFF,TOT_3G_TRAF_MB,CE_CONG_DL,CE_CONG_UL,RRC_EST_FAILURE_R,RAB_EST_FAILURE_R_VOICE,RAB_EST_FAILURE_R_PS,
+        VOICE_DROP_RATE,PS_DROP_RATE,INTER_FREQ_HO_FR,IRAT_HANDOVER_FAILURE_R_VOICE,IRAT_HANDOVER_FAILURE_R_PS,
+        RRC_EST_FAILURE_C,RAB_EST_FAILURE_VOICE_C,RAB_EST_FAILURE_PS_C,VOICE_DROP_C,PS_DROP_C,INTER_FREQ_HO_FR_NUM_C,IRAT_HANDOVER_FAILURE_VOICE_C,IRAT_HANDOVER_FAILURE_PS_C,
+        RRC_EST_FAILURE_A,RAB_EST_FAILURE_VOICE_A,RAB_EST_FAILURE_PS_A,VOICE_DROP_A, PS_DROP_A, INTER_FREQ_HO_FR_NUM_A,IRAT_HANDOVER_FAILURE_VOICE_A,IRAT_HANDOVER_FAILURE_PS_A,
+        RRC_EST_FAILURE,RAB_EST_FAILURE_VOICE,RAB_EST_FAILURE_PS,VOICE_DROP,PS_DROP,INTER_FREQ_HO_FR_NUM, IRAT_HANDOVER_FAILURE_VOICE,IRAT_HANDOVER_FAILURE_PS
+
+        FROM
+        (
+        SELECT TB.SUB_REGION,TB.RNC_NAME, TB.NODEB_NAME, TB.CELL_NAME, TRUNC(XDATA_DATE) FRAGMENT_DATE,
+
+        ROUND(0.3* ACCESSIBILITY + 0.5*RETAINABILITY + 0.2*MOBILITY,2) MAIN_RESULT,  
+        ROUND(TB.ACCESSIBILITY,2) ACCESSIBILITY,
+        ROUND(TB.RETAINABILITY,2) RETAINABILITY,
+        ROUND(TB.MOBILITY,2) MOBILITY,
+
+
+        ROUND(TB.VOICE_ATTEMPT,2) VOICE_ATTEMPT, 
+        ROUND(TB.DATA_ATTEMPT,2) DATA_ATTEMPT,
+        ROUND(TB.CS_VOICE_CALL_TRAFFIC,2) CS_VOICE_CALL_TRAFFIC,
+        ROUND(TB.CS_VIDEO_CALL_TRAFF,2) CS_VIDEO_CALL_TRAFF,
+        ROUND(TB.TOT_3G_TRAF_MB,2) TOT_3G_TRAF_MB,
+        ROUND(TB.CE_CONG_DL,2) CE_CONG_DL,
+        ROUND(TB.CE_CONG_UL,2) CE_CONG_UL,         
+        ROUND(TB.RRC_EST_FAILURE_R,2) RRC_EST_FAILURE_R,
+        ROUND(TB.RAB_EST_FAILURE_R_VOICE,2) RAB_EST_FAILURE_R_VOICE,
+        ROUND(TB.RAB_EST_FAILURE_R_PS,2) RAB_EST_FAILURE_R_PS,
+        ROUND(TB.VOICE_DROP_RATE,2) VOICE_DROP_RATE,
+        ROUND(TB.PS_DROP_RATE,2) PS_DROP_RATE,
+        ROUND(TB.INTER_FREQ_HO_FR,2) INTER_FREQ_HO_FR,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_R_VOICE,2) IRAT_HANDOVER_FAILURE_R_VOICE,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_R_PS,2) IRAT_HANDOVER_FAILURE_R_PS,   
+                 
+
+        ROUND(TB.RRC_EST_FAILURE_C,2) RRC_EST_FAILURE_C,
+        ROUND(TB.RAB_EST_FAILURE_VOICE_C,2) RAB_EST_FAILURE_VOICE_C,
+        ROUND(TB.RAB_EST_FAILURE_PS_C,2) RAB_EST_FAILURE_PS_C,
+        ROUND(TB.VOICE_DROP_C,2) VOICE_DROP_C,
+        ROUND(TB.PS_DROP_C,2) PS_DROP_C,
+        ROUND(TB.INTER_FREQ_HO_FR_NUM_C,2) INTER_FREQ_HO_FR_NUM_C,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_VOICE_C,2) IRAT_HANDOVER_FAILURE_VOICE_C,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_PS_C,2) IRAT_HANDOVER_FAILURE_PS_C,
+
+
+        ROUND(TB.RRC_EST_FAILURE_A,2) RRC_EST_FAILURE_A,
+        ROUND(TB.RAB_EST_FAILURE_VOICE_A,2) RAB_EST_FAILURE_VOICE_A,
+        ROUND(TB.RAB_EST_FAILURE_PS_A,2) RAB_EST_FAILURE_PS_A,
+        ROUND(TB.VOICE_DROP_A,2) VOICE_DROP_A,
+        ROUND(TB.PS_DROP_A,2) PS_DROP_A,
+        ROUND(TB.INTER_FREQ_HO_FR_NUM_A,2) INTER_FREQ_HO_FR_NUM_A,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_VOICE_A,2) IRAT_HANDOVER_FAILURE_VOICE_A,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_PS_A,2) IRAT_HANDOVER_FAILURE_PS_A,
+
+        ROUND(TB.RRC_EST_FAILURE,2) RRC_EST_FAILURE,
+        ROUND(TB.RAB_EST_FAILURE_VOICE,2) RAB_EST_FAILURE_VOICE,
+        ROUND(TB.RAB_EST_FAILURE_PS,2) RAB_EST_FAILURE_PS,
+        ROUND(TB.VOICE_DROP,2) VOICE_DROP,
+        ROUND(TB.PS_DROP,2) PS_DROP,
+        ROUND(TB.INTER_FREQ_HO_FR_NUM,2) INTER_FREQ_HO_FR_NUM,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_VOICE,2) IRAT_HANDOVER_FAILURE_VOICE,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_PS,2) IRAT_HANDOVER_FAILURE_PS
+
+        FROM
+        (
+            SELECT TA.*, 0.05*GREATEST(0,RRC_EST_FAILURE) + 0.75*GREATEST(0,RAB_EST_FAILURE_VOICE) + 0.2*GREATEST(0,RAB_EST_FAILURE_PS)  ACCESSIBILITY, 
+            0.6* GREATEST(0,VOICE_DROP) + 0.4*GREATEST(0,PS_DROP)  RETAINABILITY,
+            0.2* GREATEST(0,INTER_FREQ_HO_FR_NUM) + 0.4*GREATEST(0,IRAT_HANDOVER_FAILURE_VOICE) + 0.4*GREATEST(0,IRAT_HANDOVER_FAILURE_PS) MOBILITY 
+            FROM
+            (
+                SELECT
+                 T1.SUB_REGION,
+                 T1.RNC_NAME,
+                 T1.NODEB_NAME,
+                 T1.CELL_NAME, 
+                 ROUND(T1.VOICE_ATTEMPT,2) VOICE_ATTEMPT, 
+                 ROUND(T1.DATA_ATTEMPT,2) DATA_ATTEMPT,
+                 ROUND(T1.CS_VOICE_CALL_TRAFFIC,2) CS_VOICE_CALL_TRAFFIC,
+                 ROUND(T1.CS_VIDEO_CALL_TRAFF,2) CS_VIDEO_CALL_TRAFF,
+                 ROUND(T1.TOT_3G_TRAF_MB,2) TOT_3G_TRAF_MB,
+                 ROUND(T1.CE_CONG_DL,2) CE_CONG_DL,
+                 ROUND(T1.CE_CONG_UL,2) CE_CONG_UL,
+                 
+                 ROUND(T1.RRC_EST_FAILURE_R,2) RRC_EST_FAILURE_R,
+                 ROUND(T1.RAB_EST_FAILURE_R_VOICE,2) RAB_EST_FAILURE_R_VOICE,
+                 ROUND(T1.RAB_EST_FAILURE_R_PS,2) RAB_EST_FAILURE_R_PS,
+                 ROUND(T1.VOICE_DROP_RATE,2) VOICE_DROP_RATE,
+                 ROUND(T1.PS_DROP_RATE,2) PS_DROP_RATE,
+                 ROUND(T1.INTER_FREQ_HO_FR,2) INTER_FREQ_HO_FR,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_R_VOICE,2) IRAT_HANDOVER_FAILURE_R_VOICE,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_R_PS,2) IRAT_HANDOVER_FAILURE_R_PS,   
+                 
+                 
+                 ROUND(T1.RRC_EST_FAILURE,2) RRC_EST_FAILURE_C, 
+                 ROUND(T1.RAB_EST_FAILURE_VOICE,2) RAB_EST_FAILURE_VOICE_C,
+                 ROUND(T1.RAB_EST_FAILURE_PS,2) RAB_EST_FAILURE_PS_C,
+                 ROUND(T1.VOICE_DROP,2) VOICE_DROP_C,
+                 ROUND(T1.PS_DROP,2) PS_DROP_C,
+                 ROUND(T1.INTER_FREQ_HO_FR_NUM,2) INTER_FREQ_HO_FR_NUM_C,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_VOICE,2) IRAT_HANDOVER_FAILURE_VOICE_C,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_PS,2) IRAT_HANDOVER_FAILURE_PS_C,
+                 
+                 ROUND(T2.RRC_EST_FAILURE,2) RRC_EST_FAILURE_A, 
+                 ROUND(T2.RAB_EST_FAILURE_VOICE,2) RAB_EST_FAILURE_VOICE_A,
+                 ROUND(T2.RAB_EST_FAILURE_PS,2) RAB_EST_FAILURE_PS_A,
+                 ROUND(T2.VOICE_DROP,2) VOICE_DROP_A,
+                 ROUND(T2.PS_DROP,2) PS_DROP_A,
+                 ROUND(T2.INTER_FREQ_HO_FR_NUM,2) INTER_FREQ_HO_FR_NUM_A,
+                 ROUND(T2.IRAT_HANDOVER_FAILURE_VOICE,2) IRAT_HANDOVER_FAILURE_VOICE_A,
+                 ROUND(T2.IRAT_HANDOVER_FAILURE_PS,2) IRAT_HANDOVER_FAILURE_PS_A,
+                 
+                 ROUND(T1.RRC_EST_FAILURE-T2.RRC_EST_FAILURE,2) RRC_EST_FAILURE, 
+                 ROUND(T1.RAB_EST_FAILURE_VOICE-T2.RAB_EST_FAILURE_VOICE,2) RAB_EST_FAILURE_VOICE,
+                 ROUND(T1.RAB_EST_FAILURE_PS-T2.RAB_EST_FAILURE_PS,2) RAB_EST_FAILURE_PS,
+                 ROUND(T1.VOICE_DROP-T2.VOICE_DROP,2) VOICE_DROP,
+                 ROUND(T1.PS_DROP-T2.PS_DROP,2) PS_DROP,
+                 ROUND(T1.INTER_FREQ_HO_FR_NUM-T2.INTER_FREQ_HO_FR_NUM,2) INTER_FREQ_HO_FR_NUM,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_VOICE-T2.IRAT_HANDOVER_FAILURE_VOICE,2) IRAT_HANDOVER_FAILURE_VOICE,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_PS-T2.IRAT_HANDOVER_FAILURE_PS,2) IRAT_HANDOVER_FAILURE_PS
+                 
+                FROM
+                (
+                    SELECT  
+                    (SELECT  T1.SUB_REGION_NAME   FROM  NORTHI_DATA.LIST_RNC_NODEB_CELL T1 WHERE   T1.CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)   SUB_REGION,
+                    (SELECT   RNC_NAME
+                    FROM   NORTHI_DATA.LIST_RNC_NODEB_CELL
+                    WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                    RNC_NAME,
+                    (SELECT   NODEB_NAME
+                    FROM   NORTHI_DATA.LIST_RNC_NODEB_CELL
+                   WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                    NODEB_NAME,
+                    (SELECT   CELL_NAME
+                    FROM   NORTHI_DATA.LIST_RNC_NODEB_CELL
+                   WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                    CELL_NAME,
+                 ROUND ( (VOICE_ATTEMPT), 2) VOICE_ATTEMPT,
+                 ROUND ( (DATA_ATTEMPT), 2) DATA_ATTEMPT,
+                 ROUND ( (CS_VOICE_CALL_TRAFF) / 2, 2) CS_VOICE_CALL_TRAFFIC,
+                 ROUND ( (CS_VIDEO_CALL_TRAFF) / 2, 2) CS_VIDEO_CALL_TRAFF,
+                 ROUND (
+                    (  ( (PS_DL_DATA) / 8 / (1024 * 1024))
+                     + ( (PS_UL_DATA) / 8 / (1024 * 1024))
+                     + ( (TRAF_HSUPA) / (1024 * 1024))
+                     + ( (TRAF_HSDPA) / (1024 * 1024))),
+                    2
+                 )
+                    TOT_3G_TRAF_MB,
+                 ROUND (DECODE ( (ATTEMPT), 0, 0, (CE_CONG_DL) / (ATTEMPT)), 2)    CE_CONG_DL,
+                 ROUND (DECODE ( (ATTEMPT), 0, 0, (CE_CONG_UL) / (ATTEMPT)), 2)    CE_CONG_UL,
+                 
+                 
+                DECODE(ATTEMPT, 0,0, 100*(ATTEMPT - RRC_SUCCCONNESTAB)/ATTEMPT)  RRC_EST_FAILURE_R,
+                DECODE(VOICE_RAB_EST_F_R_DEN,0,0, 100*(VOICE_RAB_EST_F_R_DEN- VOICE_RAB_EST_F_R_NUM)/VOICE_RAB_EST_F_R_DEN) RAB_EST_FAILURE_R_VOICE,
+                DECODE(DATA_ATTEMPT, 0,0, 100*(DATA_ATTEMPT - PS_RAB_EST_F_R_NUM)/DATA_ATTEMPT) RAB_EST_FAILURE_R_PS,
+                                  
+                ROUND(DECODE((VOICE_RAB_ABN_REL_R_DEN),0,0,((VOICE_RAB_ABN_REL_R_NUM)/(VOICE_RAB_ABN_REL_R_DEN)) *100),2) VOICE_DROP_RATE,
+                ROUND(DECODE((PS_RAB_ABN_REL_R_DEN),0,0,((PS_RAB_ABN_REL_R_NUM))/((PS_RAB_ABN_REL_R_DEN))*100),2) PS_DROP_RATE,
+                         
+                ROUND(DECODE((INTER_FREQ_HO_FR_DEN),0,0,((INTER_FREQ_HO_FR_NUM)/(INTER_FREQ_HO_FR_DEN)) *100),2) INTER_FREQ_HO_FR,
+                ROUND(DECODE((OG_CS_IRATHO_F_R_DEN),0,0,(1-((OG_CS_IRATHO_F_R_NUM)/(OG_CS_IRATHO_F_R_DEN))) * 100),2) IRAT_HANDOVER_FAILURE_R_VOICE,
+                ROUND(DECODE((OG_PS_IRAT_C_C_F_R_DEN),0,0,(1-((OG_PS_IRAT_C_C_F_R_NUM)/(OG_PS_IRAT_C_C_F_R_DEN)))*100),2) IRAT_HANDOVER_FAILURE_R_PS,
+                         
+                 ATTEMPT - RRC_SUCCCONNESTAB  RRC_EST_FAILURE,
+                 VOICE_RAB_EST_F_R_DEN - VOICE_RAB_EST_F_R_NUM RAB_EST_FAILURE_VOICE,
+                 DATA_ATTEMPT - PS_RAB_EST_F_R_NUM RAB_EST_FAILURE_PS,
+                 VOICE_RAB_ABN_REL_R_NUM VOICE_DROP,
+                 PS_RAB_ABN_REL_R_NUM PS_DROP,
+                 INTER_FREQ_HO_FR_NUM,
+                 OG_CS_IRATHO_F_R_DEN - OG_CS_IRATHO_F_R_NUM IRAT_HANDOVER_FAILURE_VOICE,
+                 OG_PS_IRAT_C_C_F_R_DEN - OG_PS_IRAT_C_C_F_R_NUM IRAT_HANDOVER_FAILURE_PS
+                  FROM   NORTHI_DATA.CELL_STATISTICS_DA TTT
+                 WHERE   DTYPE = 1
+                         AND (FRAGMENT_DATE=TRUNC(XDATA_DATE))
+                 ) T1,
+                 (
+                   SELECT SUB_REGION,
+                   AVG(RRC_EST_FAILURE) RRC_EST_FAILURE,
+                   AVG(RAB_EST_FAILURE_VOICE) RAB_EST_FAILURE_VOICE,
+                   AVG(RAB_EST_FAILURE_PS) RAB_EST_FAILURE_PS,
+                   AVG(VOICE_DROP) VOICE_DROP,
+                   AVG(PS_DROP) PS_DROP,
+                   AVG(INTER_FREQ_HO_FR_NUM) INTER_FREQ_HO_FR_NUM,
+                   AVG(IRAT_HANDOVER_FAILURE_VOICE) IRAT_HANDOVER_FAILURE_VOICE,
+                   AVG(IRAT_HANDOVER_FAILURE_PS) IRAT_HANDOVER_FAILURE_PS
+                   FROM
+                   ( 
+                        SELECT (SELECT  T1.SUB_REGION_NAME   FROM  NORTHI_DATA.LIST_RNC_NODEB_CELL T1 WHERE   T1.CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)   SUB_REGION,
+                         (ATTEMPT - RRC_SUCCCONNESTAB)  RRC_EST_FAILURE,
+                         (VOICE_RAB_EST_F_R_DEN - VOICE_RAB_EST_F_R_NUM) RAB_EST_FAILURE_VOICE,
+                         (DATA_ATTEMPT - PS_RAB_EST_F_R_NUM) RAB_EST_FAILURE_PS,
+                         (VOICE_RAB_ABN_REL_R_NUM) VOICE_DROP,
+                         (PS_RAB_ABN_REL_R_NUM) PS_DROP,
+                         (INTER_FREQ_HO_FR_NUM) INTER_FREQ_HO_FR_NUM,
+                         (OG_CS_IRATHO_F_R_DEN - OG_CS_IRATHO_F_R_NUM) IRAT_HANDOVER_FAILURE_VOICE,
+                         (OG_PS_IRAT_C_C_F_R_DEN - OG_PS_IRAT_C_C_F_R_NUM) IRAT_HANDOVER_FAILURE_PS                 
+                    FROM   NORTHI_DATA.CELL_STATISTICS_DA TTT
+                    WHERE  DTYPE = 1
+                         AND (FRAGMENT_DATE=TRUNC(XDATA_DATE))
+                    ) 
+                    GROUP BY SUB_REGION    
+                 ) T2
+                 
+                 WHERE T1.SUB_REGION = T2.SUB_REGION
+             ) TA
+         ) TB
+         )
+        ) X
+        WHERE NETWORK_RANK<51
+        ORDER BY NETWORK_RANK;
+        
+        COMMIT;
+        
+        INSERT INTO NORTHI_DATA.WORST_CELLS_3G 
+        SELECT X.*,4 TYPE FROM
+        (
+        SELECT SUB_REGION, RNC_NAME, NODEB_NAME, CELL_NAME, FRAGMENT_DATE,
+        ROW_NUMBER() OVER(PARTITION BY SUB_REGION ORDER BY MAIN_RESULT DESC) NETWORK_RANK,
+        ROW_NUMBER() OVER(PARTITION BY SUB_REGION ORDER BY MAIN_RESULT DESC) SUB_REGION_RANK, 
+        ROW_NUMBER() OVER(PARTITION BY RNC_NAME ORDER BY MAIN_RESULT DESC) RNC_RANK, 
+        MAIN_RESULT,ACCESSIBILITY,RETAINABILITY, MOBILITY,
+        VOICE_ATTEMPT,DATA_ATTEMPT,CS_VOICE_CALL_TRAFFIC,CS_VIDEO_CALL_TRAFF,TOT_3G_TRAF_MB,CE_CONG_DL,CE_CONG_UL,RRC_EST_FAILURE_R,RAB_EST_FAILURE_R_VOICE,RAB_EST_FAILURE_R_PS,
+        VOICE_DROP_RATE,PS_DROP_RATE,INTER_FREQ_HO_FR,IRAT_HANDOVER_FAILURE_R_VOICE,IRAT_HANDOVER_FAILURE_R_PS,
+        RRC_EST_FAILURE_C,RAB_EST_FAILURE_VOICE_C,RAB_EST_FAILURE_PS_C,VOICE_DROP_C,PS_DROP_C,INTER_FREQ_HO_FR_NUM_C,IRAT_HANDOVER_FAILURE_VOICE_C,IRAT_HANDOVER_FAILURE_PS_C,
+        RRC_EST_FAILURE_A,RAB_EST_FAILURE_VOICE_A,RAB_EST_FAILURE_PS_A,VOICE_DROP_A, PS_DROP_A, INTER_FREQ_HO_FR_NUM_A,IRAT_HANDOVER_FAILURE_VOICE_A,IRAT_HANDOVER_FAILURE_PS_A,
+        RRC_EST_FAILURE,RAB_EST_FAILURE_VOICE,RAB_EST_FAILURE_PS,VOICE_DROP,PS_DROP,INTER_FREQ_HO_FR_NUM, IRAT_HANDOVER_FAILURE_VOICE,IRAT_HANDOVER_FAILURE_PS
+        FROM
+        (
+        SELECT TB.SUB_REGION,TB.RNC_NAME, TB.NODEB_NAME, TB.CELL_NAME, TRUNC(XDATA_DATE) FRAGMENT_DATE,
+        ROUND(0.3* ACCESSIBILITY + 0.5*RETAINABILITY + 0.2*MOBILITY,2) MAIN_RESULT,  
+        ROUND(TB.ACCESSIBILITY,2) ACCESSIBILITY,
+        ROUND(TB.RETAINABILITY,2) RETAINABILITY,
+        ROUND(TB.MOBILITY,2) MOBILITY,
+        ROUND(TB.VOICE_ATTEMPT,2) VOICE_ATTEMPT, 
+        ROUND(TB.DATA_ATTEMPT,2) DATA_ATTEMPT,
+        ROUND(TB.CS_VOICE_CALL_TRAFFIC,2) CS_VOICE_CALL_TRAFFIC,
+        ROUND(TB.CS_VIDEO_CALL_TRAFF,2) CS_VIDEO_CALL_TRAFF,
+        ROUND(TB.TOT_3G_TRAF_MB,2) TOT_3G_TRAF_MB,
+        ROUND(TB.CE_CONG_DL,2) CE_CONG_DL,
+        ROUND(TB.CE_CONG_UL,2) CE_CONG_UL,         
+        ROUND(TB.RRC_EST_FAILURE_R,2) RRC_EST_FAILURE_R,
+        ROUND(TB.RAB_EST_FAILURE_R_VOICE,2) RAB_EST_FAILURE_R_VOICE,
+        ROUND(TB.RAB_EST_FAILURE_R_PS,2) RAB_EST_FAILURE_R_PS,
+        ROUND(TB.VOICE_DROP_RATE,2) VOICE_DROP_RATE,
+        ROUND(TB.PS_DROP_RATE,2) PS_DROP_RATE,
+        ROUND(TB.INTER_FREQ_HO_FR,2) INTER_FREQ_HO_FR,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_R_VOICE,2) IRAT_HANDOVER_FAILURE_R_VOICE,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_R_PS,2) IRAT_HANDOVER_FAILURE_R_PS,   
+        ROUND(TB.RRC_EST_FAILURE_C,2) RRC_EST_FAILURE_C,
+        ROUND(TB.RAB_EST_FAILURE_VOICE_C,2) RAB_EST_FAILURE_VOICE_C,
+        ROUND(TB.RAB_EST_FAILURE_PS_C,2) RAB_EST_FAILURE_PS_C,
+        ROUND(TB.VOICE_DROP_C,2) VOICE_DROP_C,
+        ROUND(TB.PS_DROP_C,2) PS_DROP_C,
+        ROUND(TB.INTER_FREQ_HO_FR_NUM_C,2) INTER_FREQ_HO_FR_NUM_C,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_VOICE_C,2) IRAT_HANDOVER_FAILURE_VOICE_C,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_PS_C,2) IRAT_HANDOVER_FAILURE_PS_C,
+        ROUND(TB.RRC_EST_FAILURE_A,2) RRC_EST_FAILURE_A,
+        ROUND(TB.RAB_EST_FAILURE_VOICE_A,2) RAB_EST_FAILURE_VOICE_A,
+        ROUND(TB.RAB_EST_FAILURE_PS_A,2) RAB_EST_FAILURE_PS_A,
+        ROUND(TB.VOICE_DROP_A,2) VOICE_DROP_A,
+        ROUND(TB.PS_DROP_A,2) PS_DROP_A,
+        ROUND(TB.INTER_FREQ_HO_FR_NUM_A,2) INTER_FREQ_HO_FR_NUM_A,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_VOICE_A,2) IRAT_HANDOVER_FAILURE_VOICE_A,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_PS_A,2) IRAT_HANDOVER_FAILURE_PS_A,
+        ROUND(TB.RRC_EST_FAILURE,2) RRC_EST_FAILURE,
+        ROUND(TB.RAB_EST_FAILURE_VOICE,2) RAB_EST_FAILURE_VOICE,
+        ROUND(TB.RAB_EST_FAILURE_PS,2) RAB_EST_FAILURE_PS,
+        ROUND(TB.VOICE_DROP,2) VOICE_DROP,
+        ROUND(TB.PS_DROP,2) PS_DROP,
+        ROUND(TB.INTER_FREQ_HO_FR_NUM,2) INTER_FREQ_HO_FR_NUM,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_VOICE,2) IRAT_HANDOVER_FAILURE_VOICE,
+        ROUND(TB.IRAT_HANDOVER_FAILURE_PS,2) IRAT_HANDOVER_FAILURE_PS      
+        FROM
+        (
+            SELECT TA.*, 0.05*GREATEST(0,RRC_EST_FAILURE) + 0.75*GREATEST(0,RAB_EST_FAILURE_VOICE) + 0.2*GREATEST(0,RAB_EST_FAILURE_PS)  ACCESSIBILITY, 
+            0.6* GREATEST(0,VOICE_DROP) + 0.4*GREATEST(0,PS_DROP)  RETAINABILITY,
+            0.2* GREATEST(0,INTER_FREQ_HO_FR_NUM) + 0.4*GREATEST(0,IRAT_HANDOVER_FAILURE_VOICE) + 0.4*GREATEST(0,IRAT_HANDOVER_FAILURE_PS) MOBILITY 
+            FROM
+            (
+               SELECT 
+                 T1.SUB_REGION,
+                 T1.RNC_NAME,
+                 T1.NODEB_NAME,
+                 T1.CELL_NAME, 
+               
+                 ROUND(T1.VOICE_ATTEMPT,2) VOICE_ATTEMPT, 
+                 ROUND(T1.DATA_ATTEMPT,2) DATA_ATTEMPT,
+                 ROUND(T1.CS_VOICE_CALL_TRAFFIC,2) CS_VOICE_CALL_TRAFFIC,
+                 ROUND(T1.CS_VIDEO_CALL_TRAFF,2) CS_VIDEO_CALL_TRAFF,
+                 ROUND(T1.TOT_3G_TRAF_MB,2) TOT_3G_TRAF_MB,
+                 ROUND(T1.CE_CONG_DL,2) CE_CONG_DL,
+                 ROUND(T1.CE_CONG_UL,2) CE_CONG_UL,
+                 ROUND(T1.RRC_EST_FAILURE_R,2) RRC_EST_FAILURE_R,
+                 ROUND(T1.RAB_EST_FAILURE_R_VOICE,2) RAB_EST_FAILURE_R_VOICE,
+                 ROUND(T1.RAB_EST_FAILURE_R_PS,2) RAB_EST_FAILURE_R_PS,
+                 ROUND(T1.VOICE_DROP_RATE,2) VOICE_DROP_RATE,
+                 ROUND(T1.PS_DROP_RATE,2) PS_DROP_RATE,
+                 ROUND(T1.INTER_FREQ_HO_FR,2) INTER_FREQ_HO_FR,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_R_VOICE,2) IRAT_HANDOVER_FAILURE_R_VOICE,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_R_PS,2) IRAT_HANDOVER_FAILURE_R_PS,   
+                 ROUND(T1.RRC_EST_FAILURE,2) RRC_EST_FAILURE_C, 
+                 ROUND(T1.RAB_EST_FAILURE_VOICE,2) RAB_EST_FAILURE_VOICE_C,
+                 ROUND(T1.RAB_EST_FAILURE_PS,2) RAB_EST_FAILURE_PS_C,
+                 ROUND(T1.VOICE_DROP,2) VOICE_DROP_C,
+                 ROUND(T1.PS_DROP,2) PS_DROP_C,
+                 ROUND(T1.INTER_FREQ_HO_FR_NUM,2) INTER_FREQ_HO_FR_NUM_C,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_VOICE,2) IRAT_HANDOVER_FAILURE_VOICE_C,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_PS,2) IRAT_HANDOVER_FAILURE_PS_C,
+                 ROUND(T2.RRC_EST_FAILURE,2) RRC_EST_FAILURE_A, 
+                 ROUND(T2.RAB_EST_FAILURE_VOICE,2) RAB_EST_FAILURE_VOICE_A,
+                 ROUND(T2.RAB_EST_FAILURE_PS,2) RAB_EST_FAILURE_PS_A,
+                 ROUND(T2.VOICE_DROP,2) VOICE_DROP_A,
+                 ROUND(T2.PS_DROP,2) PS_DROP_A,
+                 ROUND(T2.INTER_FREQ_HO_FR_NUM,2) INTER_FREQ_HO_FR_NUM_A,
+                 ROUND(T2.IRAT_HANDOVER_FAILURE_VOICE,2) IRAT_HANDOVER_FAILURE_VOICE_A,
+                 ROUND(T2.IRAT_HANDOVER_FAILURE_PS,2) IRAT_HANDOVER_FAILURE_PS_A,
+                 ROUND(T1.RRC_EST_FAILURE-T2.RRC_EST_FAILURE,2) RRC_EST_FAILURE, 
+                 ROUND(T1.RAB_EST_FAILURE_VOICE-T2.RAB_EST_FAILURE_VOICE,2) RAB_EST_FAILURE_VOICE,
+                 ROUND(T1.RAB_EST_FAILURE_PS-T2.RAB_EST_FAILURE_PS,2) RAB_EST_FAILURE_PS,
+                 ROUND(T1.VOICE_DROP-T2.VOICE_DROP,2) VOICE_DROP,
+                 ROUND(T1.PS_DROP-T2.PS_DROP,2) PS_DROP,
+                 ROUND(T1.INTER_FREQ_HO_FR_NUM-T2.INTER_FREQ_HO_FR_NUM,2) INTER_FREQ_HO_FR_NUM,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_VOICE-T2.IRAT_HANDOVER_FAILURE_VOICE,2) IRAT_HANDOVER_FAILURE_VOICE,
+                 ROUND(T1.IRAT_HANDOVER_FAILURE_PS-T2.IRAT_HANDOVER_FAILURE_PS,2) IRAT_HANDOVER_FAILURE_PS
+            FROM
+            (
+                SELECT   
+                (SELECT  T1.SUB_REGION_NAME   FROM  NORTHI_DATA.LIST_RNC_NODEB_CELL T1 WHERE   T1.CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)   SUB_REGION,
+                    (SELECT   RNC_NAME
+                    FROM   NORTHI_DATA.LIST_RNC_NODEB_CELL
+                    WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                    RNC_NAME,
+                    (SELECT   NODEB_NAME
+                    FROM   NORTHI_DATA.LIST_RNC_NODEB_CELL
+                   WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                    NODEB_NAME,
+                    (SELECT   CELL_NAME
+                    FROM   NORTHI_DATA.LIST_RNC_NODEB_CELL
+                   WHERE   CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)
+                    CELL_NAME,
+                 FRAGMENT_DATE,
+                 ROUND ( (VOICE_ATTEMPT), 2) VOICE_ATTEMPT,
+                 ROUND ( (DATA_ATTEMPT), 2) DATA_ATTEMPT,
+                 ROUND ( (CS_VOICE_CALL_TRAFF) / 2, 2) CS_VOICE_CALL_TRAFFIC,
+                 ROUND ( (CS_VIDEO_CALL_TRAFF) / 2, 2) CS_VIDEO_CALL_TRAFF,
+                 ROUND ((  ( (PS_DL_DATA) / 8 / (1024 * 1024))+ ( (PS_UL_DATA) / 8 / (1024 * 1024))+ ( (TRAF_HSUPA) / (1024 * 1024))+ ( (TRAF_HSDPA) / (1024 * 1024))),2) TOT_3G_TRAF_MB,
+                 ROUND (DECODE ( (ATTEMPT), 0, 0, (CE_CONG_DL) / (ATTEMPT)), 2)    CE_CONG_DL,
+                 ROUND (DECODE ( (ATTEMPT), 0, 0, (CE_CONG_UL) / (ATTEMPT)), 2)    CE_CONG_UL,
+                DECODE(ATTEMPT, 0,0, 100*(ATTEMPT - RRC_SUCCCONNESTAB)/ATTEMPT)  RRC_EST_FAILURE_R,
+                DECODE(VOICE_RAB_EST_F_R_DEN,0,0, 100*(VOICE_RAB_EST_F_R_DEN- VOICE_RAB_EST_F_R_NUM)/VOICE_RAB_EST_F_R_DEN) RAB_EST_FAILURE_R_VOICE,
+                DECODE(DATA_ATTEMPT, 0,0, 100*(DATA_ATTEMPT - PS_RAB_EST_F_R_NUM)/DATA_ATTEMPT) RAB_EST_FAILURE_R_PS,
+                ROUND(DECODE((VOICE_RAB_ABN_REL_R_DEN),0,0,((VOICE_RAB_ABN_REL_R_NUM)/(VOICE_RAB_ABN_REL_R_DEN)) *100),2) VOICE_DROP_RATE,
+                ROUND(DECODE((PS_RAB_ABN_REL_R_DEN),0,0,((PS_RAB_ABN_REL_R_NUM))/((PS_RAB_ABN_REL_R_DEN))*100),2) PS_DROP_RATE,
+                ROUND(DECODE((INTER_FREQ_HO_FR_DEN),0,0,((INTER_FREQ_HO_FR_NUM)/(INTER_FREQ_HO_FR_DEN)) *100),2) INTER_FREQ_HO_FR,
+                ROUND(DECODE((OG_CS_IRATHO_F_R_DEN),0,0,(1-((OG_CS_IRATHO_F_R_NUM)/(OG_CS_IRATHO_F_R_DEN))) * 100),2) IRAT_HANDOVER_FAILURE_R_VOICE,
+                ROUND(DECODE((OG_PS_IRAT_C_C_F_R_DEN),0,0,(1-((OG_PS_IRAT_C_C_F_R_NUM)/(OG_PS_IRAT_C_C_F_R_DEN)))*100),2) IRAT_HANDOVER_FAILURE_R_PS,
+                 ATTEMPT - RRC_SUCCCONNESTAB  RRC_EST_FAILURE,
+                 VOICE_RAB_EST_F_R_DEN - VOICE_RAB_EST_F_R_NUM RAB_EST_FAILURE_VOICE,
+                 DATA_ATTEMPT - PS_RAB_EST_F_R_NUM RAB_EST_FAILURE_PS,
+                 VOICE_RAB_ABN_REL_R_NUM VOICE_DROP,
+                 PS_RAB_ABN_REL_R_NUM PS_DROP,
+                 INTER_FREQ_HO_FR_NUM,
+                 OG_CS_IRATHO_F_R_DEN - OG_CS_IRATHO_F_R_NUM IRAT_HANDOVER_FAILURE_VOICE,
+                 OG_PS_IRAT_C_C_F_R_DEN - OG_PS_IRAT_C_C_F_R_NUM IRAT_HANDOVER_FAILURE_PS
+              FROM   NORTHI_DATA.CELL_STATISTICS TTT
+             WHERE       DTYPE = 1
+                     AND (FRAGMENT_DATE BETWEEN TRUNC(XDATA_DATE) AND TRUNC(XDATA_DATE)+23/24)           
+             ) T1,
+             (
+              SELECT * FROM 
+              (
+                  SELECT SUB_REGION, 
+                  FRAGMENT_DATE, 
+                  AVG(RRC_EST_FAILURE) RRC_EST_FAILURE, 
+                  AVG(RAB_EST_FAILURE_VOICE) RAB_EST_FAILURE_VOICE, 
+                  AVG(RAB_EST_FAILURE_PS) RAB_EST_FAILURE_PS,
+                  AVG(VOICE_DROP) VOICE_DROP,
+                  AVG(PS_DROP) PS_DROP,
+                  AVG(INTER_FREQ_HO_FR_NUM) INTER_FREQ_HO_FR_NUM,
+                  AVG(IRAT_HANDOVER_FAILURE_VOICE) IRAT_HANDOVER_FAILURE_VOICE,
+                  AVG(IRAT_HANDOVER_FAILURE_PS) IRAT_HANDOVER_FAILURE_PS,
+                  ROW_NUMBER() OVER(PARTITION BY SUB_REGION ORDER BY SUM(TRAFFIC) DESC) RN    
+                  FROM
+                  (
+                    SELECT (SELECT  T1.SUB_REGION_NAME   FROM  NORTHI_DATA.LIST_RNC_NODEB_CELL T1 WHERE   T1.CELL_ID = TTT.NETWORK_ID AND ROWNUM = 1)   SUB_REGION,
+                         FRAGMENT_DATE,
+                         (ATTEMPT - RRC_SUCCCONNESTAB)  RRC_EST_FAILURE,
+                         (VOICE_RAB_EST_F_R_DEN - VOICE_RAB_EST_F_R_NUM) RAB_EST_FAILURE_VOICE,
+                         (DATA_ATTEMPT - PS_RAB_EST_F_R_NUM) RAB_EST_FAILURE_PS,
+                         (VOICE_RAB_ABN_REL_R_NUM) VOICE_DROP,
+                         (PS_RAB_ABN_REL_R_NUM) PS_DROP,
+                         (INTER_FREQ_HO_FR_NUM) INTER_FREQ_HO_FR_NUM,
+                         (OG_CS_IRATHO_F_R_DEN - OG_CS_IRATHO_F_R_NUM) IRAT_HANDOVER_FAILURE_VOICE,
+                         (OG_PS_IRAT_C_C_F_R_DEN - OG_PS_IRAT_C_C_F_R_NUM) IRAT_HANDOVER_FAILURE_PS,
+                         CS_VIDEO_CALL_TRAFF+CS_VOICE_CALL_TRAFF TRAFFIC                                      
+                        FROM   NORTHI_DATA.CELL_STATISTICS TTT
+                        WHERE   DTYPE = 1
+                             AND (FRAGMENT_DATE BETWEEN TRUNC(XDATA_DATE) AND TRUNC(XDATA_DATE)+23/24)
+                  )
+                  GROUP BY SUB_REGION, FRAGMENT_DATE
+              )
+              WHERE RN=1
+             ) T2
+             WHERE T1.SUB_REGION = T2.SUB_REGION AND T1.FRAGMENT_DATE=T2.FRAGMENT_DATE
+             ) TA
+         ) TB
+        )
+        )X
+        WHERE NETWORK_RANK<51
+        ORDER BY NETWORK_RANK;
+        
+        COMMIT;
+        
+  END;
+  
+  
+  PROCEDURE EXECUTE_IBM_SUBSCRIBER_TABLES
+  AS
+  BEGIN
+    SUBSCRIBER_RNC;
+    SUBSCRIBER_NODEB;
+    SUBSCRIBER_NODEB_SAATLIK(TRUNC(SYSDATE-1));
+    SUBSCRIBER_BTS_SAATLIK(TRUNC(SYSDATE-1));
+    SUBSCRIBER_RNC_SAATLIK(TRUNC(SYSDATE-1));
+    SUBSCRIBER_BSC_SAATLIK(TRUNC(SYSDATE-1));
+    SUBSCRIBER_BSC;
+    SUBSCRIBER_BTS;
+  END;
+END EXTRA_WORKS_VF;
+/

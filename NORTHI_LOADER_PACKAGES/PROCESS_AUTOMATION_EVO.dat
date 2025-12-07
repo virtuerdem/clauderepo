@@ -1,0 +1,207 @@
+
+  CREATE OR REPLACE EDITIONABLE PACKAGE BODY "NORTHI_LOADER"."PROCESS_AUTOMATION_EVO" 
+AS 
+    PROCEDURE MISSING_BSC_HUAWEI_FROM_CELL
+    AS 
+    XEMAIL_TEXT VARCHAR2(32000);
+    PRECIPIENT VARCHAR2(2000);
+    BEGIN
+        FOR XRES  IN ( 
+                -- Cell listesini son gunun saatiyle cross join yapar ve her saat gelmesi gereken BSC leri bulur. Tum BSC lerden data da gelenleri cikarir ve her saat gelmeyen BSC ler bulunur. 
+                    -- Created Date Time a gore kontrolu yaratildigi tarihten sonrasi icin yapar.
+                    SELECT A.BSC_NAME ,FRAGMENT_DATE
+                    FROM 
+                    (
+                    SELECT BSC_NAME,FRAGMENT_DATE 
+                    FROM 
+                    (
+                        SELECT DISTINCT BSC_ID ,FRAGMENT_DATE
+                        FROM NORTHI_DATA.OMC_BSC_BTS_CELL_LIST A,
+                                                (
+                                                SELECT TRUNC(SYSDATE-1)+(LEVEL-1)/24 FRAGMENT_DATE 
+                                                FROM DUAL 
+                                                CONNECT BY LEVEL<=( (SELECT MAX(DATA_DATE) FROM NORTHI_LOADER_PROCESS WHERE LOADER_STATE=2 AND VENDOR_ID=1)-((SELECT MAX(DATA_DATE) FROM NORTHI_LOADER_PROCESS WHERE LOADER_STATE=2 AND VENDOR_ID=1)-9/24))*24+1
+                                                )C
+                                                WHERE STATE_BSC=0 AND STATE_BTS=0 AND STATE_CELL=0
+                        MINUS
+                        SELECT NETWORK_ID,FRAGMENT_DATE
+                        FROM 
+                        NORTHI_DATA.CELLSTS
+                        WHERE 
+                        FRAGMENT_dATE BETWEEN (SELECT MAX(DATA_DATE) FROM NORTHI_LOADER_PROCESS WHERE LOADER_STATE=2 AND VENDOR_ID=1)-9/24 AND (SELECT MAX(DATA_DATE) FROM NORTHI_LOADER_PROCESS WHERE LOADER_STATE=2 AND VENDOR_ID=1)
+                        AND DTYPE=3
+                    ) A, (
+                        SELECT DISTINCT NETWORK_ID BSC_ID,NAME BSC_NAME,CREATED_DATE_TIME  FROM NORTHI_DATA.OBJECTS B   WHERE STATE=0 AND OBJECT_CLASS_ID = 31
+                    ) C
+                    WHERE A.BSC_ID=C.BSC_ID AND CREATED_DATE_TIME<=FRAGMENT_DATE AND  BSC_NAME NOT LIKE '%TST%'
+                    MINUS 
+                    SELECT NE_NAME, (START_DATE+(LEVEL-1)/24)
+                    FROM NORTHI_MISSING_NE D
+                    CONNECT BY LEVEL<(END_DATE-START_DATE)*24+2
+                    ) A
+                    WHERE SUBSTR(BSC_NAME,5,1)='H'
+        )LOOP
+            XEMAIL_TEXT:=XEMAIL_TEXT||'BSC_NAME:'||XRES.BSC_NAME||'  '||'FRAGMENT_DATE:'||TO_CHAR(XRES.FRAGMENT_DATE,'DD.MM.YYYY HH24')||CHR(10)||CHR(13);
+        END LOOP;
+        IF LENGTH(XEMAIL_TEXT)>1 THEN
+         PRECIPIENT:=GET_MAIL_TOLIST('MISSING_BSC_HUAWEI_FROM_CELL');
+         NORTHI.SEND_MAIL(PRECIPIENT,'Missing BSC Huawei' ,XEMAIL_TEXT);
+        END IF;
+    END;
+    PROCEDURE MISSING_BSC_MTRL_FROM_CELL
+    AS
+    XEMAIL_TEXT VARCHAR2(32000);
+    PRECIPIENT VARCHAR2(2000);
+    BEGIN
+        FOR XRES  IN ( 
+                -- Cell listesini son gunun saatiyle cross join yapar ve her saat gelmesi gereken BSC leri bulur. Tum BSC lerden data da gelenleri cikarir ve her saat gelmeyen BSC ler bulunur. 
+                    -- Created Date Time a gore kontrolu yaratildigi tarihten sonrasi icin yapar.
+                    SELECT A.BSC_NAME ,FRAGMENT_DATE
+                    FROM 
+                    (
+                    SELECT BSC_NAME,FRAGMENT_DATE 
+                    FROM 
+                    (
+                        SELECT DISTINCT BSC_ID ,FRAGMENT_DATE
+                        FROM NORTHI_DATA.OMC_BSC_BTS_CELL_LIST A,
+                                                (
+                                                    SELECT TRUNC(SYSDATE-1)+(LEVEL-1)/24 FRAGMENT_DATE 
+                                                    FROM DUAL 
+                                                    CONNECT BY LEVEL<=( (SELECT MAX(DATA_DATE) FROM NORTHI_LOADER_PROCESS WHERE LOADER_STATE=2 AND VENDOR_ID=1)-((SELECT MAX(DATA_DATE) FROM NORTHI_LOADER_PROCESS WHERE LOADER_STATE=2 AND VENDOR_ID=1)-9/24))*24+1
+                                                )C
+                                                WHERE STATE_BSC=0 AND STATE_BTS=0 AND STATE_CELL=0
+                        MINUS
+                        SELECT NETWORK_ID,FRAGMENT_DATE
+                        FROM 
+                        NORTHI_DATA.CELLSTS
+                        WHERE 
+                        FRAGMENT_dATE BETWEEN (SELECT MAX(DATA_DATE) FROM NORTHI_LOADER_PROCESS WHERE LOADER_STATE=2 AND VENDOR_ID=1)-9/24 AND (SELECT MAX(DATA_DATE) FROM NORTHI_LOADER_PROCESS WHERE LOADER_STATE=2 AND VENDOR_ID=1)
+                        AND DTYPE=3
+                    ) A, (
+                        SELECT DISTINCT NETWORK_ID BSC_ID,NAME BSC_NAME,CREATED_DATE_TIME  FROM NORTHI_DATA.OBJECTS B   WHERE STATE=0 AND OBJECT_CLASS_ID = 31
+                    ) C
+                    WHERE A.BSC_ID=C.BSC_ID AND CREATED_DATE_TIME<=FRAGMENT_DATE AND  BSC_NAME NOT LIKE '%TST%'
+                    MINUS 
+                    SELECT NE_NAME, (START_DATE+(LEVEL-1)/24)
+                    FROM NORTHI_MISSING_NE D
+                    CONNECT BY LEVEL<(END_DATE-START_DATE)*24+2
+                    ) A
+                    WHERE SUBSTR(BSC_NAME,5,1)='M'
+        )LOOP
+            XEMAIL_TEXT:=XEMAIL_TEXT||'BSC_NAME:'||XRES.BSC_NAME||'  '||'FRAGMENT_DATE:'||TO_CHAR(XRES.FRAGMENT_DATE,'DD.MM.YYYY HH24')||CHR(10)||CHR(13);
+        END LOOP;
+        IF LENGTH(XEMAIL_TEXT)>1 THEN
+         PRECIPIENT:=GET_MAIL_TOLIST('MISSING_BSC_MTRL_FROM_CELL');
+         NORTHI.SEND_MAIL(PRECIPIENT,'Missing BSC Motorola' ,XEMAIL_TEXT);
+        END IF;
+    END;
+    PROCEDURE MISSING_RNC_FROM_CELL
+    AS
+    XEMAIL_TEXT VARCHAR2(32000);
+    PRECIPIENT VARCHAR2(2000);
+    BEGIN
+         FOR XRES  IN ( 
+                     -- Cell listesini son gunun saatiyle cross join yapar ve her saat gelmesi gereken RNC leri bulur. Tum RNC lerden data da gelenleri cikarir ve her saat gelmeyen RNC ler bulunur. 
+                    -- Created Date Time a gore kontrolu yaratildigi tarihten sonrasi icin yapar.
+                    SELECT RNC_NAME,FRAGMENT_DATE 
+                    FROM 
+                    (
+                        SELECT DISTINCT RNC_ID ,FRAGMENT_DATE
+                        FROM NORTHI_DATA.LIST_RNC_NODEB_CELL A,
+                                                (
+                                                SELECT TRUNC(SYSDATE-1)+(LEVEL-1)/24 FRAGMENT_DATE 
+                                                FROM DUAL 
+                                                CONNECT BY LEVEL<=( (SELECT MAX(DATA_DATE) FROM NORTHI_LOADER_PROCESS WHERE LOADER_STATE=4 AND VENDOR_ID=1)-((SELECT MAX(DATA_DATE) FROM NORTHI_LOADER_PROCESS WHERE LOADER_STATE=4 AND VENDOR_ID=1)-9/24))*24+1
+                                                )C
+                                                WHERE RNC_STATE=0 AND NODEB_STATE=0 AND CELL_STATE=0
+                        MINUS
+                        SELECT NETWORK_ID,FRAGMENT_DATE
+                        FROM 
+                        NORTHI_DATA.CELL_STATISTICS
+                        WHERE 
+                        FRAGMENT_dATE BETWEEN (SELECT MAX(DATA_DATE) FROM NORTHI_LOADER_PROCESS WHERE LOADER_STATE=4 AND VENDOR_ID=1)-9/24 AND (SELECT MAX(DATA_DATE) FROM NORTHI_LOADER_PROCESS WHERE LOADER_STATE=4 AND VENDOR_ID=4)
+                        AND DTYPE=3
+                    ) A, 
+                    (
+                        SELECT NETWORK_ID,NAME RNC_NAME,CREATED_DATE_TIME FROM NORTHI_DATA.OBJECTS_3G B   WHERE STATE=0 AND OBJECT_CLASS_ID=1
+                    ) C
+                    WHERE A.RNC_ID=C.NETWORK_ID AND CREATED_DATE_TIME<=FRAGMENT_DATE AND  RNC_NAME NOT LIKE '%TST%'
+                    MINUS 
+                    SELECT NE_NAME, (START_DATE+(LEVEL-1)/24)
+                    FROM NORTHI_MISSING_NE D
+                    CONNECT BY LEVEL<(END_DATE-START_DATE)*24+2
+        )LOOP
+            XEMAIL_TEXT:=XEMAIL_TEXT||'RNC_NAME:'||XRES.RNC_NAME||'  '||'FRAGMENT_DATE:'||TO_CHAR(XRES.FRAGMENT_DATE,'DD.MM.YYYY HH24')||CHR(10)||CHR(13);
+        END LOOP;
+        IF LENGTH(XEMAIL_TEXT)>1 THEN
+         PRECIPIENT:=GET_MAIL_TOLIST('MISSING_RNC_FROM_CELL');
+         NORTHI.SEND_MAIL(PRECIPIENT,'Missing RNC''s from CELL Statistics' ,XEMAIL_TEXT);
+        END IF;
+    END;
+    PROCEDURE MISSING_RNC_FROM_RNC
+    AS
+    XEMAIL_TEXT VARCHAR2(32000);
+    PRECIPIENT VARCHAR2(2000);
+    BEGIN
+        FOR XRES  IN ( 
+               -- Cell listesini son gunun saatiyle cross join yapar ve her saat gelmesi gereken RNC leri bulur. Tum RNC lerden data da gelenleri cikarir ve her saat gelmeyen RNC ler bulunur. 
+                -- Created Date Time a gore kontrolu yaratildigi tarihten sonrasi icin yapar.
+                SELECT RNC_NAME,FRAGMENT_DATE 
+                FROM 
+                (
+                    SELECT DISTINCT RNC_ID ,FRAGMENT_DATE
+                    FROM NORTHI_DATA.LIST_RNC_NODEB_CELL A,
+                                            (
+                                            SELECT TRUNC(SYSDATE-1)+(LEVEL-1)/24 FRAGMENT_DATE 
+                                            FROM DUAL 
+                                            CONNECT BY LEVEL<=( (SELECT MAX(DATA_DATE) FROM NORTHI_LOADER_PROCESS WHERE LOADER_STATE=4 AND VENDOR_ID=1)-((SELECT MAX(DATA_DATE) FROM NORTHI_LOADER_PROCESS WHERE LOADER_STATE=4 AND VENDOR_ID=1)-9/24))*24+1
+                                            )C
+                                            WHERE RNC_STATE=0 AND NODEB_STATE=0 AND CELL_STATE=0
+                    MINUS
+                    SELECT NETWORK_ID,FRAGMENT_DATE
+                    FROM 
+                    NORTHI_DATA.RNC_STATISTICS
+                    WHERE 
+                    FRAGMENT_dATE BETWEEN (SELECT MAX(DATA_DATE) FROM NORTHI_LOADER_PROCESS WHERE LOADER_STATE=4 AND VENDOR_ID=1)-9/24 AND (SELECT MAX(DATA_DATE) FROM NORTHI_LOADER_PROCESS WHERE LOADER_STATE=4 AND VENDOR_ID=1)
+                    AND DTYPE=1
+                ) A, 
+                (
+                    SELECT NETWORK_ID,NAME RNC_NAME,CREATED_DATE_TIME FROM NORTHI_DATA.OBJECTS_3G B   WHERE STATE=0 AND OBJECT_CLASS_ID=1
+                ) C
+                WHERE A.RNC_ID=C.NETWORK_ID AND CREATED_DATE_TIME<=FRAGMENT_DATE AND  RNC_NAME NOT LIKE '%TST%'
+                MINUS 
+                SELECT NE_NAME, (START_DATE+(LEVEL-1)/24)
+                FROM NORTHI_MISSING_NE D
+                CONNECT BY LEVEL<(END_DATE-START_DATE)*24+2  
+        )LOOP
+            XEMAIL_TEXT:=XEMAIL_TEXT||'RNC_NAME:'||XRES.RNC_NAME||'  '||'FRAGMENT_DATE:'||TO_CHAR(XRES.FRAGMENT_DATE,'DD.MM.YYYY HH24')||CHR(10)||CHR(13);
+        END LOOP;
+        IF LENGTH(XEMAIL_TEXT)>1 THEN
+         PRECIPIENT:=GET_MAIL_TOLIST('MISSING_RNC_FROM_RNC');
+         NORTHI.SEND_MAIL(PRECIPIENT,'Missing RNC''s from RNC Statistics' ,XEMAIL_TEXT);
+        END IF;
+    
+    END;
+    PROCEDURE RUN_PROC 
+    AS
+    BEGIN
+        FOR XRES IN 
+        (
+          SELECT PROC_NAME
+          FROM NORTHI_PA_PROC_LIST  
+          WHERE  PROC_PERIOD LIKE '%'||TO_CHAR(SYSDATE,'HH24')||'%'   
+         ) LOOP
+            EXECUTE IMMEDIATE 'BEGIN PROCESS_AUTOMATION_EVO.'||XRES.PROC_NAME||'; END;';
+         END LOOP; 
+    END;
+    FUNCTION GET_MAIL_TOLIST(XPROC_NAME VARCHAR2) RETURN VARCHAR2
+    AS 
+    XMAIL_LIST VARCHAR2(2000);
+    BEGIN
+        SELECT MAIL_TOLIST INTO XMAIL_LIST
+        FROM NORTHI_PA_PROC_LIST
+        WHERE PROC_NAME =XPROC_NAME ;
+        RETURN XMAIL_LIST;
+    END;
+END;
+/
