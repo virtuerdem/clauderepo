@@ -1,0 +1,7 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."XX" is
+a varchar2(100);
+begin
+select '1' into a from dual@SAS;
+end;
+/

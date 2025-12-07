@@ -1,0 +1,74 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."Z_CALC_POP_TRAFFIC_ATTEMPT" (XDATE DATE)
+AS
+BEGIN
+ DELETE FROM NORTHI_DATA.POPULATION_TRAFFIC_ATTEMPT WHERE FRAGMENT_DATE BETWEEN XDATE AND XDATE+23/24;
+ COMMIT;
+      insert /*+ append */ INTO NORTHI_DATA.POPULATION_TRAFFIC_ATTEMPT A 
+          (A.POPULATION_ID, A.FRAGMENT_DATE, A.TCH_TRAFFIC, A.TCH_ATTEMPT, A.DCR_VF_NUM, A.DCR_VF_CELL_DENOM, A.CSTCHB_VF_NUM, A.CSTCHB_VF_DENOM, A.TCH_TRAFFIC_HR)
+  SELECT   D.POPULATION_NAME POPULATION_NAME, C.FRAGMENT_DATE FRAGMENT_DATE,
+                      SUM (C.TCH_TRAFFIC) TCH_TRAFFIC,
+                      SUM (C.TCH_ATTEMPTS) TCH_ATTEMPT,
+                      SUM (C.DCR_VF_NUM) DCR_VF_NUM,
+                      SUM (C.TCH_NORMSEIZS) DCR_VF_CELL_DENOM,
+                      SUM (C.CSTCHB_VF_NUM) CSTCHB_VF_NUM,
+                      SUM (C.CSTCHB_VF_DENOM) CSTCHB_VF_DENOM,
+                      SUM (C.TCH_TRAFFICHR) TCH_TRAFFIC_HR
+                 FROM NORTHI_DATA.CELLSTS C,(
+                                         SELECT DISTINCT POPULATION_NAME,N_ID  NETWORK_ID
+                                         FROM
+                                         (
+                                         SELECT POPULATION_NAME,A.NETWORK_ID N_ID
+                                         FROM
+                                         (
+                                             SELECT DISTINCT POPULATION_NAME,POPULATION_ID,NETWORK_ID,PCELL_ID FROM
+                                             ( 
+                                                 SELECT POPULATION_NAME,POPULATION_ID,NETWORK_ID,PCELL_ID
+                                                 FROM NORTHI_DATA.POPULATION_CELL_LIST D
+                                                 
+                                                 UNION ALL
+                                                 select POPULATION_NAME,POPULATION_ID,new_id NETWORK_ID,PCELL_ID
+                                                 from NORTHI_DATA.cell_tilda_list T,NORTHI_DATA.POPULATION_CELL_LIST D
+                                                 WHERE OLD_ID=NETWORK_ID
+                           
+                                             ) 
+                                          )A LEFT OUTER JOIN
+                                          (
+                                            SELECT NETWORK_ID,PCELL_ID
+                                            FROM NORTHI_DATA.POPULATION_CELL_LIST_OLD B
+                        
+                                          ) B
+                                          ON ( A.PCELL_ID=B.PCELL_ID )
+                                          UNION ALL
+                                          SELECT POPULATION_NAME,B.NETWORK_ID N_ID
+                                            FROM
+                                            (
+                                             SELECT DISTINCT POPULATION_NAME,POPULATION_ID,NETWORK_ID,PCELL_ID FROM
+                                             ( 
+                                                 SELECT POPULATION_NAME,POPULATION_ID,NETWORK_ID,PCELL_ID
+                                                 FROM NORTHI_DATA.POPULATION_CELL_LIST D
+                                                 --WHERE POPULATION_ID=20415
+                                                 UNION ALL
+                                                 select POPULATION_NAME,POPULATION_ID,new_id NETWORK_ID,PCELL_ID
+                                                 from NORTHI_DATA.cell_tilda_list T,NORTHI_DATA.POPULATION_CELL_LIST D
+                                                 WHERE OLD_ID=NETWORK_ID --AND  POPULATION_ID=20415
+                           
+                                             ) 
+                                            )A LEFT OUTER JOIN
+                                            ( 
+                                            SELECT NETWORK_ID,PCELL_ID
+                                            FROM NORTHI_DATA.POPULATION_CELL_LIST_OLD B
+                        
+                                            ) B
+                                            ON ( A.PCELL_ID=B.PCELL_ID )
+                                           )
+                                    
+                 ) D
+                WHERE 
+                  C.DTYPE=1 AND C.NETWORK_ID = D.NETWORK_ID
+                  AND FRAGMENT_DATE BETWEEN XDATE AND XDATE+23/24
+             GROUP BY D.POPULATION_NAME, C.FRAGMENT_DATE
+             ORDER BY D.POPULATION_NAME;            
+     commit;
+END z_CALC_POP_TRAFFIC_ATTEMPT; 
+/

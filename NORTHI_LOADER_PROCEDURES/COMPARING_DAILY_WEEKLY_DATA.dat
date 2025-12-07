@@ -1,0 +1,40 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."COMPARING_DAILY_WEEKLY_DATA" 
+AS
+   XVOLTE_TRAFFIC         NUMBER;
+   XDATA_TRAFFIC_VOL_GB   NUMBER;
+BEGIN
+   SELECT VOLTE_TRAFFIC, DATA_TRAFFIC_VOL_GB
+     INTO XVOLTE_TRAFFIC, XDATA_TRAFFIC_VOL_GB
+     FROM (SELECT ROUND ( (VOLTE_TRAFFIC) / 36000, 0) VOLTE_TRAFFIC,
+                  ROUND (
+                       (DL_TRAFFIC_VOL + UL_TRAFFIC_VOL)
+                     / 8
+                     / (1024 * 1024 * 1024),
+                     0)
+                     DATA_TRAFFIC_VOL_GB
+             FROM NORTHI_DATA.CELLSTS_4G_7WA
+            WHERE FRAGMENT_DATE = TRUNC (SYSDATE, 'iw') - 7 AND DTYPE = 3
+           MINUS
+           SELECT ROUND (SUM (VOLTE_TRAFFIC) / 36000, 0) VOLTE_TRAFFIC,
+                  ROUND (
+                       SUM (DL_TRAFFIC_VOL + UL_TRAFFIC_VOL)
+                     / 8
+                     / (1024 * 1024 * 1024),
+                     0)
+                     DATA_TRAFFIC_VOL_GB
+             FROM NORTHI_DATA.CELLSTS_4G_DA
+            WHERE     FRAGMENT_DATE BETWEEN TRUNC (SYSDATE, 'iw') - 7
+                                        AND TRUNC (SYSDATE, 'iw') - 1 / 24
+                  AND DTYPE = 3);
+
+      
+   EXCEPTION
+     WHEN NO_DATA_FOUND THEN
+      EXECUTE IMMEDIATE 'TRUNCATE TABLE NORTHI_DATA.CELLSTS_4G_TMP';
+
+     WHEN OTHERS THEN
+     NORTHI.SEND_MAIL('erdem.tarikci@ttgint.com,cagdas.topal@ttgint.com,sultan.oztel@ttgint.com,biray.celik@ttgint.com,nur.gorpeli@ttgint.com,baran.anac@ttgint.com', 'LTE WEEKLY Process', 'Son hafta icin CELLSTS_4G_TMP tablosuyla CELLSTS_4G tablosunun datalarinin kontrol edilmesi gerekiyor.');
+
+END;
+/

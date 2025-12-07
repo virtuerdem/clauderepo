@@ -1,0 +1,39 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."CLEAN_DUPLICATED_TBL_TK" 
+AS
+XDATE DATE;
+XDUPLICATE_COUNT NUMBER;
+BEGIN
+    XDATE:=to_date('28.05.2014 11:00','DD.MM.YYYY HH24:MI');
+    WHILE XDATE<=to_date('28.05.2014 11:00','DD.MM.YYYY HH24:MI')
+    LOOP
+            DELETE FROM NORTHI_CUST_BSS.TBL_TK_POPULATION_CELL WHERE (ROWID) IN
+            (
+            SELECT ROWID RX
+            FROM
+            (
+            SELECT
+            ROW_NUMBER() OVER (PARTITION BY  CELL_NAME,TARIH ORDER BY  CELL_NAME) RN,
+             CELL_NAME,TARIH
+            FROM NORTHI_CUST_BSS.TBL_TK_POPULATION_CELL
+            WHERE  ( CELL_NAME,TARIH) IN
+            (
+            SELECT  CELL_NAME,TARIH
+            FROM
+            (
+                SELECT   CELL_NAME,TARIH,COUNT(*) CNT
+                FROM NORTHI_CUST_BSS.TBL_TK_POPULATION_CELL
+                WHERE TARIH=XDATE
+                GROUP BY  CELL_NAME,TARIH
+            )
+            WHERE CNT > 1
+            )
+            )
+            WHERE RN>1
+            );
+
+            COMMIT;
+            XDATE:=XDATE+1/24;
+    END LOOP;
+END; 
+/

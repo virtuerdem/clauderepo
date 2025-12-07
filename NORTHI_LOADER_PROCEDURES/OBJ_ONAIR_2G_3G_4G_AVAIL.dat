@@ -1,0 +1,272 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."OBJ_ONAIR_2G_3G_4G_AVAIL" AS 
+
+XDATA_DATE DATE; 
+
+BEGIN
+
+EXECUTE IMMEDIATE 'TRUNCATE TABLE NORTHI_DATA.OBJ_ONAIR_2G_3G_4G';
+
+
+FOR xdays in ( WITH date_list  AS (
+SELECT TRUNC(SYSDATE) - rownum XDATA_DATE  
+  FROM dual
+    CONNECT BY LEVEL <= 10              
+)
+SELECT XDATA_DATE
+  FROM date_list 
+ WHERE XDATA_DATE in( trunc(SYSDATE - 8)    
+                    ,  trunc(SYSDATE - 1)  )        
+ ORDER BY XDATA_DATE ) 
+
+LOOP
+                -- 2G --
+
+INSERT INTO  NORTHI_DATA.OBJ_ONAIR_2G_3G_4G  ( FRAGMENT_dATE,  TECH_2G_3G_4G, NETWORK_ID, SITE_ID,RNC_BSC_ID, MAIN_REGION_ID,SUB_REGION_ID, SITE_NAME,RNC_BSC_NAME,MAIN_REGION_NAME,SUB_REGION_NAME
+)
+WITH  
+ DATASET_ONAIR AS
+(
+SELECT * FROM NORTHI_DATA.AVAILABILITY_ONAIR_LIST WHERE (FRAGMENT_DATE=xdays.XDATA_DATE)
+), 
+DS_OBJ_DATA_2G AS
+(SELECT  DISTINCT DATA_DATE, MAIN_REGION_NAME,
+SUB_REGION_NAME,
+BSC_NAME,
+B.BTS_NAME BTS_NAME,
+CELL_NAME,
+MAIN_REGION_ID,
+SUB_REGION_ID,
+BSC_ID,
+A.BTS_ID,
+CELL_ID
+  FROM   NORTHI_DATA.OMC_BSC_BTS_CELL_LIST A , 
+ ( SELECT NE_ID BTS_ID ,NE_NAME BTS_NAME, DATA_DATE FROM NORTHI_PARSER.OBJECTS_HW2G WHERE NE_TYPE=30 AND 
+   DATA_DATE =xdays.XDATA_DATE )  B
+   WHERE A.BTS_ID=B.BTS_ID   AND 
+      ( SUBSTR (B.BTS_NAME,LENGTH (B.BTS_NAME)- INSTR (REVERSE (B.BTS_NAME), '_')+ 2,LENGTH (B.BTS_NAME)) NOT IN('MEVSIM' ,'SLC' ,'SKD' ,'GUV' ,'TRF' ,'ODB','MOB' , 'Mob', 'Mobil', 'MOBIL' ,'TEST' ,'SWAP' ,'AKT' ,'RHM','SE') 
+        AND B.BTS_NAME NOT LIKE '%~%'
+        AND B.BTS_NAME NOT LIKE '%SWAP%'   )  
+
+) 
+SELECT DISTINCT  FRAGMENT_dATE,'2G' TECH_2G_3G_4G, NETWORK_ID,BTS_ID SITE_ID,BSC_ID RNC_BSC_ID, MAIN_REGION_ID,SUB_REGION_ID,BTS_NAME SITE_NAME,BSC_NAME RNC_BSC_NAME,MAIN_REGION_NAME,SUB_REGION_NAME
+FROM DATASET_ONAIR A , DS_OBJ_DATA_2G B
+WHERE A.NETWORK_ID=B.CELL_ID AND A.FRAGMENT_dATE=B.DATA_DATE ; commit; 
+
+                  -- 3G --
+
+
+INSERT INTO NORTHI_DATA.OBJ_ONAIR_2G_3G_4G (FRAGMENT_dATE,
+                                            TECH_2G_3G_4G,
+                                            NETWORK_ID,
+                                            SITE_ID,
+                                            RNC_BSC_ID,
+                                            MAIN_REGION_ID,
+                                            SUB_REGION_ID,
+                                            SITE_NAME,
+                                            RNC_BSC_NAME,
+                                            MAIN_REGION_NAME,
+                                            SUB_REGION_NAME)
+   WITH DATASET_ONAIR
+        AS (SELECT *
+              FROM NORTHI_DATA.AVAILABILITY_ONAIR_LIST
+             WHERE (FRAGMENT_DATE =xdays.XDATA_DATE)),
+        DS_OBJ_DATA_3G
+        AS (SELECT DISTINCT DATA_DATE,
+                            MAIN_REGION_NAME,
+                            SUB_REGION_NAME,
+                            RNC_NAME,
+                            B.NODEB_NAME NODEB_NAME,
+                            CELL_NAME,
+                            MAIN_REGION_ID,
+                            SUB_REGION_ID,
+                            RNC_ID,
+                            A.NODEB_ID,
+                            CELL_ID
+              FROM NORTHI_DATA.LIST_RNC_NODEB_CELL A,
+                   (SELECT NE_ID NODEB_ID, NE_NAME NODEB_NAME, DATA_DATE
+                      FROM M2000.OBJECTS_HW3G
+                     WHERE NE_TYPE = 30 AND DATA_DATE=xdays.XDATA_DATE) 
+                   B
+             WHERE     A.NODEB_ID = B.NODEB_ID
+                   AND (    SUBSTR (
+                               B.NODEB_NAME,
+                                 LENGTH (B.NODEB_NAME)
+                               - INSTR (REVERSE (B.NODEB_NAME), '_')
+                               + 2,
+                               LENGTH (B.NODEB_NAME)) NOT IN ('MEVSIM',
+                                                              'SLC',
+                                                              'SKD',
+                                                              'GUV',
+                                                              'TRF',
+                                                              'ODB',
+                                                              'MOB',
+                                                              'Mob',
+                                                              'Mobil',
+                                                              'MOBIL',
+                                                              'TEST',
+                                                              'SWAP',
+                                                              'AKT',
+                                                              'RHM',
+                                                              'SE')
+                        AND B.NODEB_NAME NOT LIKE '%~%'
+                        AND B.NODEB_NAME NOT LIKE '%SWAP%')
+                   AND SUBSTR (A.CELL_NAME, 8, 1) <> '3')
+   SELECT DISTINCT FRAGMENT_dATE,
+                   '3G' TECH_2G_3G_4G,
+                   NETWORK_ID,
+                   NODEB_ID SITE_ID,
+                   RNC_ID RNC_BSC_ID,
+                   MAIN_REGION_ID,
+                   SUB_REGION_ID,
+                   NODEB_NAME SITE_NAME,
+                   RNC_NAME RNC_BSC_NAME,
+                   MAIN_REGION_NAME,
+                   SUB_REGION_NAME
+     FROM DATASET_ONAIR A, DS_OBJ_DATA_3G B
+    WHERE A.NETWORK_ID = B.CELL_ID AND A.FRAGMENT_dATE = B.DATA_DATE; commit; 
+    
+                -- LTE--
+
+INSERT /*+ PARALLEL(16) */  INTO NORTHI_DATA.OBJ_ONAIR_2G_3G_4G (FRAGMENT_dATE,
+                                            TECH_2G_3G_4G,
+                                            NETWORK_ID,
+                                            SITE_ID,
+                                            RNC_BSC_ID,
+                                            MAIN_REGION_ID,
+                                            SUB_REGION_ID,
+                                            SITE_NAME,
+                                            RNC_BSC_NAME,
+                                            MAIN_REGION_NAME,
+                                            SUB_REGION_NAME)
+   WITH DATASET_ONAIR
+        AS (SELECT /*+ PARALLEL(16) */ NETWORK_ID,FRAGMENT_DATE  
+              FROM NORTHI_DATA.AVAILABILITY_ONAIR_LIST
+             WHERE (FRAGMENT_DATE =xdays.XDATA_DATE) AND TECH='4G'),
+        DS_OBJ_DATA_4G
+        AS ( SELECT /*+ PARALLEL(16) */  DISTINCT DATA_DATE,
+                            MAIN_REGION_NAME,
+                            SUB_REGION_NAME,
+                             B.ENODEB_NAME ENODEB_NAME,
+                            CELL_NAME,
+                            MAIN_REGION_ID,
+                            SUB_REGION_ID,
+                             A.ENODEB_ID,
+                            CELL_ID
+              FROM NORTHI_DATA.LIST_ENODEB_CELL A,
+                   (SELECT NE_ID ENODEB_ID, NE_NAME ENODEB_NAME, DATA_DATE
+                      FROM NORTHI_PARSER.OBJECTS_HW4G 
+                     WHERE NE_TYPE = 30 AND DATA_DATE=xdays.XDATA_DATE)
+                   B
+             WHERE     A.ENODEB_ID = B.ENODEB_ID
+                   AND (    SUBSTR (
+                               B.ENODEB_NAME,
+                                 LENGTH (B.ENODEB_NAME)
+                               - INSTR (REVERSE (B.ENODEB_NAME), '_')
+                               + 2,
+                               LENGTH (B.ENODEB_NAME)) NOT IN ('MEVSIM',
+                                                              'SLC',
+                                                              'SKD',
+                                                              'GUV',
+                                                              'TRF',
+                                                              'ODB',
+                                                              'MOB',
+                                                              'Mob',
+                                                              'Mobil',
+                                                              'MOBIL',
+                                                              'TEST',
+                                                              'SWAP',
+                                                              'AKT',
+                                                              'RHM',
+                                                              'SE')
+                        AND B.ENODEB_NAME NOT LIKE '%~%'
+                        AND B.ENODEB_NAME NOT LIKE '%SWAP%') )
+   SELECT DISTINCT FRAGMENT_dATE,
+                   '4G' TECH_2G_3G_4G,
+                   NETWORK_ID,
+                   ENODEB_ID SITE_ID,
+                   '' RNC_BSC_ID,
+                   MAIN_REGION_ID,
+                   SUB_REGION_ID,
+                   ENODEB_NAME SITE_NAME,
+                   '' RNC_BSC_NAME,
+                   MAIN_REGION_NAME,
+                   SUB_REGION_NAME
+     FROM DATASET_ONAIR A, DS_OBJ_DATA_4G B
+    WHERE A.NETWORK_ID = B.CELL_ID AND A.FRAGMENT_dATE = B.DATA_DATE;
+    
+    
+                -- ULAK--
+  
+    INSERT /*+ PARALLEL(16) */  INTO NORTHI_DATA.OBJ_ONAIR_2G_3G_4G (FRAGMENT_dATE,
+                                            TECH_2G_3G_4G,
+                                            NETWORK_ID,
+                                            SITE_ID,
+                                            RNC_BSC_ID,
+                                            MAIN_REGION_ID,
+                                            SUB_REGION_ID,
+                                            SITE_NAME,
+                                            RNC_BSC_NAME,
+                                            MAIN_REGION_NAME,
+                                            SUB_REGION_NAME)
+   WITH DATASET_ONAIR
+        AS (SELECT /*+ PARALLEL(16) */ NETWORK_ID,FRAGMENT_DATE  
+              FROM NORTHI_DATA.AVAILABILITY_ONAIR_LIST
+             WHERE (FRAGMENT_DATE=xdays.XDATA_DATE) AND TECH='UL'),
+        DS_OBJ_DATA_4G
+        AS ( SELECT /*+ PARALLEL(16) */  DISTINCT DATA_DATE,
+                            MAIN_REGION_NAME,
+                            SUB_REGION_NAME,
+                             B.ENODEB_NAME ENODEB_NAME,
+                            CELL_NAME,
+                            MAIN_REGION_ID,
+                            SUB_REGION_ID,
+                             A.ENODEB_ID,
+                            CELL_ID
+              FROM NORTHI_DATA.LIST_ULAK_ENODEB_CELL A,
+                   ( SELECT NE_ID ENODEB_ID, NE_NAME ENODEB_NAME, DATA_DATE
+                      FROM NORTHI_PARSER.OBJECTS_ULAK4G_DAILY 
+                     WHERE NE_TYPE = 30 AND DATA_DATE=xdays.XDATA_DATE)
+                   B
+             WHERE     A.ENODEB_ID = B.ENODEB_ID
+                   AND (    SUBSTR (
+                               B.ENODEB_NAME,
+                                 LENGTH (B.ENODEB_NAME)
+                               - INSTR (REVERSE (B.ENODEB_NAME), '_')
+                               + 2,
+                               LENGTH (B.ENODEB_NAME)) NOT IN ('MEVSIM',
+                                                              'SLC',
+                                                              'SKD',
+                                                              'GUV',
+                                                              'TRF',
+                                                              'ODB',
+                                                              'MOB',
+                                                              'Mob',
+                                                              'Mobil',
+                                                              'MOBIL',
+                                                              'TEST',
+                                                              'SWAP',
+                                                              'AKT',
+                                                              'RHM',
+                                                              'SE')
+                        AND B.ENODEB_NAME NOT LIKE '%~%'
+                        AND B.ENODEB_NAME NOT LIKE '%SWAP%'
+                        AND B.ENODEB_NAME NOT LIKE '%CROWD%') )
+   SELECT DISTINCT FRAGMENT_dATE,
+                   'UL' TECH_2G_3G_4G,
+                   NETWORK_ID,
+                   ENODEB_ID SITE_ID,
+                   '' RNC_BSC_ID,
+                   MAIN_REGION_ID,
+                   SUB_REGION_ID,
+                   ENODEB_NAME SITE_NAME,
+                   '' RNC_BSC_NAME,
+                   MAIN_REGION_NAME,
+                   SUB_REGION_NAME
+     FROM DATASET_ONAIR A, DS_OBJ_DATA_4G B
+    WHERE A.NETWORK_ID = B.CELL_ID AND A.FRAGMENT_dATE = B.DATA_DATE; commit;
+    
+    END LOOP; 
+    
+    END;
+/

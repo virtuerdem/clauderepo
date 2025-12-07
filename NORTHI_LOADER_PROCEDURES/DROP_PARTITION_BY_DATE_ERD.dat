@@ -1,0 +1,25 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."DROP_PARTITION_BY_DATE_ERD" ( XTABLE_NAME VARCHAR2,XMIN_DATE DATE ) AS 
+  v_sql             varchar2(500);
+    XSQL             varchar2(500);
+  v_date            DATE;
+  v_partition_name  user_tab_partitions.partition_name%TYPE;
+  v_high_value      user_tab_partitions.high_value%TYPE;
+  
+  CURSOR c1 IS SELECT PARTITION_NAME, HIGH_VALUE
+               FROM all_tab_partitions WHERE TABLE_NAME=XTABLE_NAME AND PARTITION_NAME!='P0';
+BEGIN
+  OPEN c1;
+  LOOP
+    FETCH c1 INTO v_partition_name, v_high_value;
+    EXIT WHEN c1%NOTFOUND;
+    v_date := to_date(SUBSTR(v_high_value,11,19),'YYYY-MM-DD HH24:MI:SS');
+    IF v_date < XMIN_DATE THEN
+
+      v_sql := 'alter table NORTHI_PARSER.'||XTABLE_NAME||' drop partition ' || v_partition_name;
+      EXECUTE immediate v_sql;
+    END IF;
+  END LOOP;
+  CLOSE c1;
+                    END;
+/

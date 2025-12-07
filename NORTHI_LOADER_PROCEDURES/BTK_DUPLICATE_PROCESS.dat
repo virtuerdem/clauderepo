@@ -1,0 +1,91 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."BTK_DUPLICATE_PROCESS" (XSTART_DATE DATE, XEND_DATE DATE)
+IS
+BEGIN 
+
+
+----------------------------------2G
+
+               DELETE                             /*+ PARALLEL(S,16) */
+               FROM        NORTHI_CUST_BSS.TBL_TK_POPULATION_CELL S
+               WHERE (ROWID) IN                         
+                              (              
+                  WITH DS_SOURCE AS 
+                  (                          
+                SELECT  /*+  MATERIALIZE PARALLEL(A,16) */  ROWID ROW_ID ,CONCAT(CONCAT(yer,CELL_NAME),TRUNC(TARIH)) CONC3, yer, CELL_NAME , TARIH, TRAFFIC
+                FROM NORTHI_CUST_BSS.TBL_TK_POPULATION_CELL A
+                WHERE TARIH BETWEEN XSTART_DATE AND XEND_DATE+23/24
+                GROUP BY  ROWID, CONCAT(CONCAT(yer,CELL_NAME),TRUNC(TARIH)), yer, CELL_NAME, TARIH, TRAFFIC
+                ORDER BY 4 DESC
+                 ),
+                  DS_DUBLICATE AS 
+                 (
+                SELECT   ROW_ID,
+                ROW_NUMBER() OVER (PARTITION BY  concat(concat(yer,cell_name),trunc(tarih)) ORDER BY  traffic DESC) RN
+                FROM   DS_SOURCE
+                 )
+                 SELECT ROW_ID
+                 FROM DS_DUBLICATE
+                 WHERE RN>1
+                 );
+                 
+                 COMMIT;
+
+
+----------------------------------3G
+
+               DELETE                             /*+ PARALLEL(S,16) */
+               FROM        NORTHI_DATA.Z_TBL_TK_3G_CITY_LIST_481_SON S
+               WHERE (ROWID) IN                         
+                              (              
+                  WITH DS_SOURCE AS 
+                  (                          
+                SELECT  /*+  MATERIALIZE PARALLEL(A,16) */  ROWID ROW_ID ,CONCAT(CONCAT(CITY,CELL_NAME),TRUNC(TARIH)) CONC3, CITY, CELL_NAME , TARIH, TRAFFIC
+                FROM NORTHI_DATA.Z_TBL_TK_3G_CITY_LIST_481_SON A
+                WHERE TARIH BETWEEN XSTART_DATE AND XEND_DATE+23/24
+                GROUP BY  ROWID, CONCAT(CONCAT(CITY,CELL_NAME),TRUNC(TARIH)), CITY, CELL_NAME, TARIH, TRAFFIC
+                ORDER BY 4 DESC
+                 ),
+                  DS_DUBLICATE AS 
+                 (
+                SELECT   ROW_ID,
+                ROW_NUMBER() OVER (PARTITION BY  concat(concat(city,cell_name),trunc(tarih)) ORDER BY  traffic DESC) RN
+                FROM   DS_SOURCE
+                 )
+                 SELECT ROW_ID
+                 FROM DS_DUBLICATE
+                 WHERE RN>1
+                 );
+                 
+                 COMMIT;
+
+
+----------------------------------4G
+
+               DELETE                             /*+ PARALLEL(S,16) */
+               FROM        NORTHI_DATA.Z_TBL_TK_4G_CITY_LIST_2000_SON S
+               WHERE (ROWID) IN                         
+                              (              
+                  WITH DS_SOURCE AS 
+                  (                          
+                SELECT  /*+  MATERIALIZE PARALLEL(A,16) */  ROWID ROW_ID ,CONCAT(CONCAT(CITY,CELL_NAME),TRUNC(TARIH)) CONC3, CITY, CELL_NAME , TARIH, TRAFFIC
+                FROM NORTHI_DATA.Z_TBL_TK_4G_CITY_LIST_2000_SON A
+                WHERE TARIH BETWEEN XSTART_DATE AND XEND_DATE+23/24
+                GROUP BY  ROWID, CONCAT(CONCAT(CITY,CELL_NAME),TRUNC(TARIH)), CITY, CELL_NAME, TARIH, TRAFFIC
+                ORDER BY 4 DESC
+                 ),
+                  DS_DUBLICATE AS 
+                 (
+                SELECT   ROW_ID,
+                ROW_NUMBER() OVER (PARTITION BY  concat(concat(city,cell_name),trunc(tarih)) ORDER BY  traffic DESC) RN
+                FROM   DS_SOURCE
+                 )
+                 SELECT ROW_ID
+                 FROM DS_DUBLICATE
+                 WHERE RN>1
+                 );
+                 
+                 COMMIT;
+    
+END;
+/

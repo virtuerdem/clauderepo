@@ -1,0 +1,107 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."GIVEN_DAY_DATA_CONTROL_BSS" (XDATA_DATE DATE)
+AS
+--XTABLE VARCHAR2(40);
+XSTATEMENT  CLOB:=EMPTY_CLOB;
+XTEMP_TAB VARCHAR2(40);
+XTEMP_DAT DATE;
+XHTML_TABLE VARCHAR2(32000);
+BEGIN
+    XTEMP_TAB:='XXX';
+    XTEMP_DAT:=XDATA_DATE;
+    XHTML_TABLE:='';
+    FOR XRES IN
+    (
+            SELECT A.TABLE_NAME,PARTITION_ID,DATA_DATE,A.AGGREGATE_TYPE,DTYPE,B.DATA_COUNT TOTAL_DATA,A.DATA_COUNT MAX_DATA, (A.DATA_COUNT-B.DATA_COUNT) MISSING_DATA
+            FROM
+            (
+                SELECT TABLE_NAME,AGGREGATE_TYPE,MAX(DATA_COUNT) DATA_COUNT
+                FROM
+                (
+                    SELECT TABLE_NAME,AGGREGATE_TYPE,FRAGMENT_DATE,SUM(DATA_COUNT) DATA_COUNT
+                    FROM NORTHI_TABLE_LOGS A
+                    WHERE FRAGMENT_DATE BETWEEN XDATA_DATE-1 AND (XDATA_DATE-1 )+23/24
+                    GROUP BY TABLE_NAME,AGGREGATE_TYPE,FRAGMENT_DATE
+                )
+                WHERE TO_CHAR(FRAGMENT_DATE,'HH24') IN ('00','01','02','03')
+                GROUP BY TABLE_NAME,AGGREGATE_TYPE
+
+            )A,
+            (
+                 SELECT C.PARTITION_ID,A.TABLE_NAME, FRAGMENT_DATE DATA_DATE,AGGREGATE_TYPE,DTYPE,SUM(DATA_COUNT) DATA_COUNT
+                FROM NORTHI_TABLE_LOGS A,
+                (SELECT DISTINCT B.PARTITION_ID,TABLE_NAME,DTYPE,DECODE(DTYPE,1,'LOADER',0,'LOADER',PARTITION_VALUE) PARTITION_VALUE
+                 FROM NORTHI_LOADER_SETTINGS A,NORTHI_PARTITION_TYPE B
+                 WHERE
+                 A.PARTITION_ID=B.PARTITION_ID
+                 AND VENDOR_ID IN (1,5)
+                ) C
+                WHERE
+                A.TABLE_NAME=C.TABLE_NAME
+                AND A.AGGREGATE_TYPE=C.PARTITION_VALUE
+                AND A.FRAGMENT_DATE BETWEEN XDATA_DATE-1 AND (XDATA_DATE-1)+23/24
+                GROUP BY C.PARTITION_ID,A.TABLE_NAME,FRAGMENT_DATE,AGGREGATE_TYPE,DTYPE
+                ORDER BY TABLE_NAME,FRAGMENT_DATE,DTYPE
+            ) B
+            WHERE A.TABLE_NAME=B.TABLE_NAME
+            AND A.AGGREGATE_TYPE=B.AGGREGATE_TYPE
+            AND (A.DATA_COUNT-B.DATA_COUNT)>0
+            AND A.TABLE_NAME NOT IN ('CELLHO')
+            ORDER BY A.TABLE_NAME,DATA_DATE,DTYPE
+    )
+    LOOP
+
+        IF (XTEMP_TAB!=XRES.TABLE_NAME) THEN
+           --EGER TABLODA BISEYLER VARSA.TABLO KAPATILIP YENISI ICIN BOSALTILIR.
+           IF XHTML_TABLE IS NOT NULL THEN
+                XHTML_TABLE := XHTML_TABLE||'</TR></TABLE>';
+                XSTATEMENT:=XSTATEMENT||XHTML_TABLE||CHR(13)||CHR(10);
+                XHTML_TABLE:='';
+           END IF;
+           XTEMP_TAB:=XRES.TABLE_NAME;
+           --Header olusturdum.
+           XSTATEMENT:=XSTATEMENT||CHR(13)||CHR(10)||CHR(13)||CHR(10)||'<p style="font-family:verdana;color:red;font-size:13px;font-weight:bold">'||XRES.TABLE_NAME||'</p>'||CHR(13)||CHR(10)||CHR(13)||CHR(10);
+           FOR XTYPES IN
+            (
+                    SELECT PARTITION_VALUE
+                    FROM NORTHI_PARTITION_TYPE
+                    WHERE PARTITION_ID=XRES.PARTITION_ID
+                    ORDER BY DTYPE
+            )
+            LOOP
+                IF XHTML_TABLE IS NULL THEN
+                    XHTML_TABLE:=XHTML_TABLE||'<TABLE border="1" style="font-family:verdana;font-size:12px">'||'<TR><TD>Data Date:</TD>';
+                END IF;
+                XHTML_TABLE:=XHTML_TABLE||'<TD>DType</TD><TD>VAL</TD><TD>M</TD>';
+            END LOOP;
+            XHTML_TABLE:=XHTML_TABLE||'</TR>';
+            XTEMP_DAT:=XDATA_DATE;
+        END IF;
+
+        IF (XTEMP_DAT!=XRES.DATA_DATE) THEN
+            XTEMP_DAT:=XRES.DATA_DATE;
+            XHTML_TABLE:=XHTML_TABLE||'<TR><TD>'||TO_CHAR(XRES.DATA_DATE,'DD.MM.YYYY HH24')||'</TD>';
+        END IF;
+        IF XRES.MISSING_DATA>0 THEN
+            XHTML_TABLE:=XHTML_TABLE||'<TD style="font-weight:bold">'||XRES.AGGREGATE_TYPE||'</TD>'||'<TD>'||XRES.TOTAL_DATA||'</TD><TD BGCOLOR="yellow">'||XRES.MISSING_DATA|| '</TD>';
+        ELSE
+            XHTML_TABLE:=XHTML_TABLE||'<TD style="font-weight:bold">'||XRES.AGGREGATE_TYPE||'</TD>'||'<TD>'||XRES.TOTAL_DATA||'</TD><TD>'||XRES.MISSING_DATA|| '</TD>';
+        END IF;
+    END LOOP;
+    --NORTHI.SEND_MAIL2('vesile.taskiran@ttgint.com','HOURLY BSS Data Control',XSTATEMENT);
+    IF LENGTH(XHTML_TABLE)>0 THEN
+        XHTML_TABLE:=XHTML_TABLE||'</TR></TABLE>';
+        XSTATEMENT:=XSTATEMENT||XHTML_TABLE;
+    END IF;
+    IF LENGTH(XSTATEMENT)>0 THEN
+       html_email(
+            'vesile.taskiran@ttgint.com',
+            'pmtool@vodafone.com',
+            'Prev. Day BSS Data Control',
+            'A bit of text',
+            xstatement,
+            '172.21.253.99',
+            '25');
+    END IF;
+END;
+/

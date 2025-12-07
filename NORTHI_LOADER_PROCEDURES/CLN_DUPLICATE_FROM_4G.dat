@@ -1,0 +1,38 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."CLN_DUPLICATE_FROM_4G" (XDATA_DATE IN DATE)  AS
+
+BEGIN
+ 
+               EXECUTE IMMEDIATE 'DELETE /*+ PARALLEL(8)*/ FROM NORTHI_DATA.CELLSTS_4G_TMP
+           WHERE (ROWID) IN
+               (
+            SELECT /*+ PARALLEL(8)*/  ROWID RX
+            FROM
+            (
+                SELECT  
+                ROW_NUMBER() OVER (PARTITION BY NETWORK_ID,FRAGMENT_DATE ORDER BY NETWORK_ID) RN,
+                NETWORK_ID,FRAGMENT_DATE
+                FROM NORTHI_DATA.CELLSTS_4G_TMP
+                WHERE  (NETWORK_ID,FRAGMENT_DATE) IN
+                (
+                    SELECT /*+ PARALLEL(8)*/  NETWORK_ID,FRAGMENT_DATE
+                    FROM
+                    (
+                        SELECT  NETWORK_ID,FRAGMENT_DATE,COUNT(*) CNT
+                        FROM NORTHI_DATA.CELLSTS_4G_TMP
+                        WHERE FRAGMENT_DATE=TO_DATE('''||to_char(XDATA_DATE,'dd.mm.yyyy hh24:MI')||''',''dd.mm.yyyy hh24:MI'')'||' AND DTYPE=1
+                         GROUP BY NETWORK_ID,FRAGMENT_DATE
+                    )
+                    WHERE CNT > 1
+                )
+                 AND FRAGMENT_DATE=TO_DATE('''||to_char(XDATA_DATE,'dd.mm.yyyy hh24:MI')||''',''dd.mm.yyyy hh24:MI'')'||' AND DTYPE=1
+            )
+            WHERE RN>1
+            )';
+            
+          
+            
+COMMIT;
+                      
+ END;
+/

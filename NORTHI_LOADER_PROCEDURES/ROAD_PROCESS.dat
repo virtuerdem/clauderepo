@@ -1,0 +1,70 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."ROAD_PROCESS" IS
+
+
+BEGIN
+
+           MERGE /*+ APPEND */
+                INTO  ROAD_TYPE_LIST O
+                USING (
+                       SELECT DISTINCT ROAD_TYPE
+                         FROM ROAD_CELL_LIST_TEMP
+                      ) E
+                ON    (O.ROAD_TYPE = E.ROAD_TYPE)
+
+              WHEN NOT MATCHED THEN
+                INSERT (ROAD_TYPE_ID,ROAD_TYPE )
+
+                VALUES (SEQ_ROAD_TYPE_LIST.NEXTVAL,E.ROAD_TYPE)
+                 WHERE E.ROAD_TYPE IS NOT NULL ;
+
+           COMMIT;
+
+           MERGE /*+ APPEND */
+                INTO  ROAD_NAME_LIST O
+                USING (
+                       SELECT DISTINCT ROAD_NAME
+                         FROM ROAD_CELL_LIST_TEMP
+                      ) E
+                ON    (O.ROAD_NAME = E.ROAD_NAME)
+
+              WHEN NOT MATCHED THEN
+                INSERT (ROAD_NAME_ID,ROAD_NAME )
+
+                VALUES (SEQ_ROAD_NAME_LIST.NEXTVAL,E.ROAD_NAME)
+                 WHERE E.ROAD_NAME IS NOT NULL ;
+
+           COMMIT;
+
+           EXECUTE_SQL('TRUNCATE TABLE ROAD_CELL_LIST');
+
+           INSERT /*+APPEND */ INTO ROAD_CELL_LIST (ROAD_TYPE,ROAD_NAME,PCELL_ID,CELL_NAME,NETWORK_ID,ROAD_TYPE_ID,ROAD_NAME_ID,REC_ID)
+           SELECT P.*  ,C.NAME,C.NETWORK_ID,NULL,NULL,SEQ_ROAD_CELL_LIST.NEXTVAL
+           FROM ROAD_CELL_LIST_TEMP P, CELL_LIST C, OMC_BSC_BTS_CELL_LIST OMC
+           WHERE C.PCELL_ID=P.PCELL_ID
+             AND OMC.CELL_ID = C.NETWORK_ID;
+
+           COMMIT;
+
+
+
+
+           UPDATE ROAD_CELL_LIST c
+              SET ROAD_TYPE_id = (SELECT DISTINCT ROAD_TYPE_id
+                                  FROM ROAD_TYPE_LIST
+                                 WHERE C.ROAD_TYPE = ROAD_TYPE),
+
+                  ROAD_NAME_id = (SELECT DISTINCT ROAD_NAME_id
+                                  FROM ROAD_NAME_LIST
+                                 WHERE C.ROAD_NAME = ROAD_NAME);
+
+           COMMIT;
+
+
+   EXCEPTION
+     WHEN NO_DATA_FOUND THEN
+        raise_application_error(-20001, SQLERRM);
+     WHEN OTHERS THEN
+        raise_application_error(-20001, SQLERRM);
+END; 
+/

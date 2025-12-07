@@ -1,0 +1,25 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."RAW_DATA_TRACKING" as 
+    xsql VARCHAR2(1000);
+BEGIN
+    FOR xtrunc_table IN (
+        SELECT parent_name
+        FROM northi_loader_parents
+        WHERE active = 1
+          AND table_name = 'CELLSTS_4G'
+    )
+    LOOP
+        xsql := 'INSERT INTO NORTHI_PARSER_SETTINGS.PARSER_SQLLDR_ERDEM
+                 (data_date, loaded_data_count, table_name)
+                 SELECT data_date,
+                        COUNT(*),
+                        ''' || xtrunc_table.parent_name || '''
+                 FROM HIZIR2.' || xtrunc_table.parent_name || '
+                 WHERE data_date = TRUNC(SYSDATE, ''HH24'') - 1/24
+                 GROUP BY data_date';
+
+        EXECUTE IMMEDIATE xsql;
+        COMMIT;
+    END LOOP;
+END;
+/

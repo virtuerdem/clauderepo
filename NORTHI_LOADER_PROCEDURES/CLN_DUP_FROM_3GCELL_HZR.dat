@@ -1,0 +1,42 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."CLN_DUP_FROM_3GCELL_HZR" (XDATE DATE)
+AS 
+SQ VARCHAR2(32000);
+BEGIN
+    FOR XTABLE
+    IN
+    (
+        SELECT PARENT_NAME FROM NORTHI_LOADER_PARENTS WHERE TABLE_NAME='KKTC_CELLSTS_3G' AND ACTIVE=1 AND VENDOR_ID=23
+    )
+    LOOP
+        SQ:='DELETE FROM NORTHI_PARSER_KKTC.'||XTABLE.PARENT_NAME||
+          ' WHERE (ROWID) IN
+               (
+            SELECT ROWID RX
+            FROM
+            (
+            SELECT
+            ROW_NUMBER() OVER (PARTITION BY RNCID,NETWORK_ID,DATA_DATE ORDER BY RNCID,NETWORK_ID) RN,
+            RNCID,NETWORK_ID,DATA_DATE
+            FROM NORTHI_PARSER_KKTC.'||XTABLE.PARENT_NAME||
+            ' WHERE  (RNCID,NETWORK_ID,DATA_DATE) IN
+            (
+            SELECT RNCID,NETWORK_ID,DATA_DATE
+            FROM
+            (
+                SELECT  RNCID,NETWORK_ID,DATA_DATE,COUNT(*) CNT
+                FROM NORTHI_PARSER_KKTC.'||XTABLE.PARENT_NAME||
+                ' WHERE DATA_DATE=TO_DATE('''||to_char(XDATE,'dd.mm.yyyy hh24:MI')||''',''dd.mm.yyyy hh24:MI'')'||
+                ' GROUP BY RNCID,NETWORK_ID,DATA_DATE
+            )
+            WHERE CNT > 1
+            )
+            )
+            WHERE RN>1
+            )';
+            EXECUTE IMMEDIATE SQ;
+            COMMIT;
+            
+    END LOOP;
+END; 
+/

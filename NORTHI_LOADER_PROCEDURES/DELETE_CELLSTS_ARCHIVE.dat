@@ -1,0 +1,32 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."DELETE_CELLSTS_ARCHIVE" 
+AS
+XDATE DATE;
+
+BEGIN
+
+    XDATE:= ADD_MONTHS(TRUNC (SYSDATE, 'month'),-25); 
+    WHILE XDATE<= TRUNC(ADD_MONTHS(TRUNC (SYSDATE, 'month'),-24)-1)+23/24
+    
+  LOOP
+  
+  ------------------2G---------------------
+  
+            DELETE /*+PARALLEL(16)*/ NORTHI_DATA.CELLSTS_2G_ARCHIVE WHERE FRAGMENT_DATE=XDATE; COMMIT;
+                       
+ ---------------------3G--------------------    
+ 
+            DELETE /*+PARALLEL(16)*/ NORTHI_DATA.CELLSTS_3G_ARCHIVE WHERE FRAGMENT_DATE=XDATE; COMMIT; 
+                        
+ ---------------------4G---------------------
+      
+            DELETE /*+PARALLEL(16)*/ NORTHI_DATA.CELLSTS_4G_ARCHIVE WHERE FRAGMENT_DATE=XDATE; COMMIT;
+            
+----------------------------------------    
+
+            XDATE:=XDATE+1/24;
+
+  END LOOP;
+    
+END;
+/

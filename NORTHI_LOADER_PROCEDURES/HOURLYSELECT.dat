@@ -1,0 +1,30 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."HOURLYSELECT" (XDATE1 DATE, XDATE2 DATE, VENDORNUM NUMBER)
+AS
+XN VARCHAR2(400);
+BEGIN
+SELECT TABLE_NAME INTO XN
+FROM  NORTHI_LOADER.NORTHI_LOADER_PROCESS
+WHERE LOADER_STATE=0 AND DATA_DATE BETWEEN TO_DATE(XDATE1,'DD.MM.YYYY HH24') AND TO_DATE(XDATE2,'DD.MM.YYYY HH24');
+END HOURLYSELECT;
+
+/******************************************************************************
+   NAME:       HOURLYIS
+   PURPOSE:
+
+   REVISIONS:
+   Ver        Date        Author           Description
+   ---------  ----------  ---------------  ------------------------------------
+   1.0        08.10.2010          1. Created this procedure.
+
+   NOTES:
+
+   Automatically available Auto Replace Keywords:
+      Object Name:     HOURLYIS
+      Sysdate:         08.10.2010
+      Date and Time:   08.10.2010, 14:16:45, and 08.10.2010 14:16:45
+      Username:         (set in TOAD Options, Procedure Editor)
+      Table Name:       (set in the "New PL/SQL Object" dialog)
+
+******************************************************************************/
+/

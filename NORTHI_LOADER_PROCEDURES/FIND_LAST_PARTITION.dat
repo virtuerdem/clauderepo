@@ -1,0 +1,43 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."FIND_LAST_PARTITION" IS
+ a varchar2(200);
+ Xmax_poss number;
+ Xmax_name number;
+ begin
+
+
+
+    for xtable in
+    (
+
+          SELECT TABLE_NAME
+          FROM ALL_TABLES WHERE
+          TABLE_NAME LIKE 'WBH%'
+    )
+    loop
+
+        execute immediate 'Select TO_NUMBER(MAX(PARTITION_POSITION)),TO_NUMBER(MAX(TO_NUMBER(SUBSTR(PARTITION_NAME,17,7)))) '
+                          || ' FROM ALL_TAB_PARTITIONS WHERE PARTITION_NAME<>''TABLE_PARTITION_MAX'' AND table_name='''||XTABLE.TABLE_NAME||''' ORDER BY PARTITION_POSITION'
+                          INTO XMAX_POSS,XMAX_NAME;
+
+         --EXECUTE IMMEDIATE 'select max(partition_position) FROM sys.USER_TAB_PARTITIONS WHERE table_name=''BSS_STATISTICS'' ' INTO mx;
+         EXECUTE IMMEDIATE 'SELECT HIGH_VALUE FROM ALL_TAB_PARTITIONS WHERE table_name='''||XTABLE.TABLE_NAME||''' and partition_position = '
+                           ||to_char(XmAX_POSS) INTO a;
+
+          INSERT INTO NORTHI_TABLE_PARTITION_LIST ( TABLE_NAME, PARTITION_NAME, DATA_DATE, DATA_TYPE)
+          VALUES(XTABLE.TABLE_NAME,XMAX_NAME,A,7);
+
+
+
+    end loop;
+    COMMIT;
+
+
+   EXCEPTION
+     WHEN NO_DATA_FOUND THEN
+       NULL;
+     WHEN OTHERS THEN
+       -- Consider logging the error and then re-raise
+       RAISE;
+END ;
+/

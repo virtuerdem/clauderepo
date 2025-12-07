@@ -1,0 +1,44 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."TWAMP_HOURLY_PROCESS" 
+AS
+XDATE DATE;
+
+BEGIN
+
+    XDATE:= TRUNC(SYSDATE,'HH24')-6/24;
+    WHILE XDATE<= TRUNC(SYSDATE,'HH24')
+
+   LOOP
+
+        --------------VDF-----------------
+        
+        DELETE FROM NORTHI_DATA.TWAMP_PERF_H WHERE FRAGMENT_DATE = XDATE; COMMIT;
+        
+        DELETE FROM NORTHI_LOADER.NORTHI_TABLE_LOGS WHERE TABLE_NAME = 'TWAMP_PERF_H' AND FRAGMENT_DATE = XDATE; COMMIT; 
+       
+        NORTHI_LOADER.P_TWAMP_PERF_H (XDATE);
+               
+        XDATE:= XDATE + 1 /24;
+        
+        COMMIT;
+        
+        
+        --------------KKTC-----------------
+        
+        
+        DELETE FROM NORTHI_DATA.KKTC_TWAMP_PERF_H WHERE FRAGMENT_DATE = XDATE; COMMIT;
+        
+        DELETE FROM NORTHI_LOADER.NORTHI_TABLE_LOGS WHERE TABLE_NAME = 'KKTC_TWAMP_PERF_H' AND FRAGMENT_DATE = XDATE; COMMIT; 
+               
+        NORTHI_LOADER.P_KKTC_TWAMP_PERF_H (XDATE);
+               
+        XDATE:= XDATE + 1 /24;
+        
+        COMMIT;
+        
+        ----------------------------------
+
+  END LOOP;
+  
+END;
+/

@@ -1,0 +1,153 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."MAIL_FILES" (from_name varchar2, 
+                                        to_name varchar2, 
+                                        subject varchar2, 
+                                        message varchar2, 
+                                        max_size number default 
+                                        9999999999, 
+                                        p_oracle_directory varchar2, 
+                                        p_binary_file varchar2) 
+is 
+  v_smtp_server varchar2(100) := 'outlook.vodafone.local'; --change this to your mail server ( eski vodafone mail server IP: 172.21.253.99)
+  v_smtp_server_port number := 25; 
+  v_directory_name varchar2(100); 
+  v_file_name varchar2(100); 
+  v_line varchar2(1000); 
+  crlf varchar2(2):= chr(13) || chr(10); 
+  mesg varchar2(32767); 
+  conn utl_smtp.connection; 
+  v_slash_pos number; 
+  v_file_handle utl_file.file_type; 
+  invalid_path exception; 
+  mesg_length_exceeded boolean := false; 
+   PROCEDURE write_raw(p_conn in out nocopy utl_smtp.connection, 
+                      p_message in raw) is 
+  BEGIN 
+    utl_smtp.write_raw_data(p_conn, p_message); 
+  END write_raw; 
+  PROCEDURE write_mime_header(p_conn in out nocopy utl_smtp.connection, 
+                              p_name in varchar2, 
+                              p_value in varchar2) is 
+  BEGIN 
+    write_raw(p_conn => p_conn, 
+    p_message => utl_raw.cast_to_raw(p_name || ': ' || p_value || utl_tcp.crlf)); 
+  END write_mime_header; 
+  PROCEDURE write_boundary(p_conn in out nocopy utl_smtp.connection, 
+                           p_last in boolean default false) AS 
+  BEGIN 
+    if (p_last) then 
+      utl_smtp.write_data(p_conn, '--DMW.Boundary.605592468--'||crlf); 
+    else 
+      utl_smtp.write_data(p_conn, '--DMW.Boundary.605592468'||crlf); 
+    end if; 
+  END write_boundary; 
+  PROCEDURE end_attachment(p_conn in out nocopy utl_smtp.connection, 
+                           p_last in boolean default true) IS 
+  BEGIN 
+    utl_smtp.write_data(p_conn, utl_tcp.crlf); 
+    if (p_last) then 
+      write_boundary(p_conn, p_last); 
+    end if; 
+  END end_attachment; 
+   PROCEDURE begin_attachment(p_conn in out nocopy utl_smtp.connection, 
+                             p_mime_type in varchar2 default 
+                             'text/plain', 
+                             p_inline in boolean default false, 
+                             p_filename in varchar2 default null, 
+                             p_transfer_enc in varchar2 default null) is 
+  BEGIN 
+    write_boundary(p_conn); 
+    if (p_transfer_enc is not null) then 
+      write_mime_header(p_conn, 'Content-Transfer-Encoding', 
+                        p_transfer_enc); 
+    end if; 
+    write_mime_header(p_conn, 'Content-Type', p_mime_type); 
+    if (p_filename is not null) then 
+      if (p_inline) then 
+        write_mime_header(p_conn, 'Content-Disposition', 'inline;
+                          filename="' || p_filename || '"'); 
+      else 
+        write_mime_header(p_conn,'Content-Disposition', 'attachment;
+                          filename="' || p_filename || '"'); 
+      end if; 
+    end if; 
+    utl_smtp.write_data(p_conn, utl_tcp.crlf); 
+  END begin_attachment; 
+   PROCEDURE binary_attachment(p_conn in out utl_smtp.connection, 
+                              p_file_name in varchar2, 
+                              p_mime_type in varchar2) is 
+    k_max_line_width constant pls_integer default 54; 
+    v_amt binary_integer := 672 * 3; /* ensures proper format; 2016 */ 
+    v_bfile bfile; 
+    v_file_len pls_integer; 
+    v_buf raw(2100); 
+    v_modulo pls_integer; 
+    v_pieces pls_integer;
+v_file_pos pls_integer := 1;
+    v_data raw(2100); 
+    v_chunks pls_integer; 
+  BEGIN 
+    begin_attachment(p_conn => p_conn, 
+                     p_mime_type => p_mime_type, 
+                     p_inline => TRUE, 
+                     p_filename => p_file_name, 
+                     p_transfer_enc => 'base64'); 
+    BEGIN 
+      v_bfile := bfilename(p_oracle_directory, p_file_name); 
+      v_file_len := dbms_lob.getlength(v_bfile); 
+      v_modulo := MOD(v_file_len, v_amt); 
+      v_pieces := TRUNC(v_file_len / v_amt); 
+      if (v_modulo <> 0) then 
+        v_pieces := v_pieces + 1; 
+      end if; 
+      dbms_lob.fileopen(v_bfile, dbms_lob.file_readonly); 
+      dbms_lob.read(v_bfile, v_amt, v_file_pos, v_buf); 
+      v_data := null; 
+      for i in 1 .. v_pieces loop 
+        v_file_pos := I * v_amt + 1; 
+        v_file_len := v_file_len - v_amt; 
+        v_data := utl_raw.concat(v_data, v_buf); 
+        v_chunks := TRUNC(utl_raw.length(v_data) / k_max_line_width); 
+        if (i <> v_pieces) then 
+          v_chunks := v_chunks - 1; 
+        end if; 
+        write_raw(p_conn => p_conn, p_message => utl_encode.base64_encode
+                 (v_data)); 
+        v_data := null; 
+        if (v_file_len < v_amt AND v_file_len > 0) then 
+          v_amt := v_file_len; 
+        end if; 
+        dbms_lob.READ(v_bfile, v_amt, v_file_pos, v_buf); 
+      end loop; 
+    END; 
+    dbms_lob.fileclose(v_bfile); 
+    end_attachment(p_conn => p_conn); 
+  EXCEPTION 
+    when no_data_found then 
+      end_attachment(p_conn => p_conn); 
+      dbms_lob.fileclose(v_bfile); 
+  END binary_attachment; 
+BEGIN
+  conn:= utl_smtp.open_connection( v_smtp_server, v_smtp_server_port ); 
+  utl_smtp.helo( conn, v_smtp_server ); 
+  utl_smtp.mail( conn, from_name ); 
+  utl_smtp.rcpt( conn, to_name ); 
+  utl_smtp.open_data ( conn ); 
+  utl_smtp.write_data(conn, 'Subject: '||subject||crlf);
+  mesg:= 'Content-Transfer-Encoding: 7bit' || crlf || 
+         'Content-Type: multipart/mixed;
+          boundary="DMW.Boundary.605592468"' || crlf || 
+         'Mime-Version: 1.0' || crlf || 
+         '--DMW.Boundary.605592468' || crlf || 
+         'Content-Transfer-Encoding: binary'||crlf|| 
+         'Content-Type: text/plain' ||crlf || 
+          crlf || message || crlf ; 
+  utl_smtp.write_raw_data ( conn, utl_raw.cast_to_raw(mesg) ); 
+  binary_attachment(p_conn => conn, 
+                    p_file_name => p_binary_file, 
+                    p_mime_type => 'text/plain;
+                    name="'||p_binary_file||'"'); 
+  utl_smtp.close_data( conn ); 
+  utl_smtp.quit( conn ); 
+END MAIL_FILES; 
+/

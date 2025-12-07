@@ -1,0 +1,69 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."W_O_KPI_COUNTERS" (XTABLE_NAME VARCHAR2)
+AS
+XVENDOR_COUNTER VARCHAR2(32000);
+XVENDOR_COUNTER_DB VARCHAR2(32000);
+XCOUNTER_ID VARCHAR2(500);
+XCOUNTER_NAME VARCHAR2(32000);
+XCOUNTER_DESCRIPTION VARCHAR2(32000);
+ 
+BEGIN 
+
+        ---- Basic report definition tablosunda bulunmayan table_name'ler icin AP_NORTHI_KPI_COUNTERS procedure'den ayri yaratildi.----
+        
+           DELETE FROM NORTHI_KPI_COUNTERS_ERDEM WHERE TABLE_NAME=XTABLE_NAME ;
+    COMMIT;
+ 
+            FOR XLOOP2 IN
+            (
+                SELECT  LOCAL_FIELD, C.REMOTE_FIELD ,-1 NE_LEVEL
+                FROM   NORTHI_TABLE_FIELDS C
+                WHERE TABLE_NAME=XTABLE_NAME
+                --AND A.RECORD_ID=XLOOP.RECORD_ID
+                 ORDER BY LOCAL_FIELD
+            )
+            LOOP
+                FOR XLOOP3 IN 
+                (
+                    SELECT REGEXP_REPLACE(LOCAL_FIELD, '[A-Z]{1,2}\.|[A-Z]{1,2}(\d)\.|[A-Z]{,1}\.', '') LOCAL_FIELD
+                      FROM
+                      (
+                        SELECT TO_CHAR(TRIM(REGEXP_SUBSTR(FIELD_EXP, '[^,]+', 1, LEVEL))) AS LOCAL_FIELD
+                          FROM 
+                          (
+                              SELECT MULTIPLE_REPLACE( XLOOP2.REMOTE_FIELD,
+                                           NEW t_text( 'ROUND(',',2)','SUM(','MAX(','MIN(','AVG(','DECODE(','+','-','*','/',',0,0,',',0,1,',')','(','NVL(','(',',100',',,,',',,',',8',',104576,',',NULL,',',1,',',60,60,',',0,','NORTHI_DATA.BTRAFFIC_CALCULATE'),
+                                           NEW t_text( '','','','','','','',',',',',',',',',',',',',',','(','','','',',',',','',',',',',',',',',',','')
+                                         ) FIELD_EXP 
+                              FROM DUAL
+                          )
+                          CONNECT BY LEVEL <= REGEXP_count(FIELD_EXP, '[^,]+')+1
+                      )
+                     WHERE LOCAL_FIELD IS NOT NULL
+                )
+                LOOP
+                    SELECT DISTINCT COUNTER_ID , COUNTER_NAME ,COUNTER_DESCRIPTION  INTO XCOUNTER_ID, XCOUNTER_NAME , XCOUNTER_DESCRIPTION 
+                    FROM 
+                    (   SELECT COUNTER_NAME_DB COUNTER_ID , COUNTER_NAME_LOOKUP COUNTER_NAME ,DECODE(COUNTER_DESCRIPTION,NULL,COUNTER_NAME_DB,COUNTER_DESCRIPTION)COUNTER_DESCRIPTION
+                        FROM  NORTHI_PARSER_SETTINGS.PARSER_COUNTER_LIST A,  (SELECT * FROM NORTHI_LOADER.NORTHI_LOADER_PARENTS WHERE TABLE_NAME=XTABLE_NAME) X 
+                        WHERE A.TABLE_NAME=X.PARENT_NAME 
+                        UNION ALL
+                        SELECT SUBSTR(XLOOP3.LOCAL_FIELD,INSTR(XLOOP3.LOCAL_FIELD,'.')+1) COLUMN_NAME, SUBSTR(XLOOP3.LOCAL_FIELD,INSTR(XLOOP3.LOCAL_FIELD,'.')+1) COLUMN_NAME ,SUBSTR(XLOOP3.LOCAL_FIELD,INSTR(XLOOP3.LOCAL_FIELD,'.')+1) COLUMN_NAME
+                        FROM DUAL
+                    )
+                    WHERE COUNTER_ID=SUBSTR(XLOOP3.LOCAL_FIELD,INSTR(XLOOP3.LOCAL_FIELD,'.')+1)
+                    AND ROWNUM=1;
+                    XVENDOR_COUNTER_DB:=XLOOP3.LOCAL_FIELD;
+                    XVENDOR_COUNTER:=XCOUNTER_NAME;
+                     IF (NUMBERS_ONLY( XVENDOR_COUNTER_DB) IS NULL) AND (XVENDOR_COUNTER_DB!=' ') AND (XVENDOR_COUNTER_DB IS NOT NULL) THEN
+                         
+                        INSERT INTO NORTHI_KPI_COUNTERS_ERDEM(TABLE_NAME, KPI_COUNTER, KPI_COUNTER_NAME, KPI_COUNTER_DEFINITION, ACTIVE)
+                        VALUES (XTABLE_NAME,XVENDOR_COUNTER_DB,XVENDOR_COUNTER,XCOUNTER_DESCRIPTION,1);
+                    
+                        COMMIT;
+                    END IF;
+                END LOOP;
+              END LOOP; 
+              
+              END ;
+/

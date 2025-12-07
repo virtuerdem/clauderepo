@@ -1,0 +1,12 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."SESSION_KILL" (ssid number, serial number) is
+ses_user varchar2(64);
+begin
+   select username into ses_user from GV$SESSION where sid = ssid and serial# = serial and type!='BACKGROUND';
+   IF ses_user is not null THEN
+      execute immediate 'alter system kill session ''' || ssid || ',' || serial || '''' ;
+   ELSE
+      raise_application_error(-20001, 'Session Not Found !');
+   END IF;
+end ;
+/

@@ -1,0 +1,42 @@
+
+  CREATE OR REPLACE EDITIONABLE PROCEDURE "NORTHI_LOADER"."BINARY_ATTACHMENT" (p_conn in out utl_smtp.connection, 
+                              p_file_name in varchar2, 
+                              p_mime_type in varchar2) is 
+    k_max_line_width constant pls_integer default 54; 
+    v_amt binary_integer := 672 * 3; /* ensures proper format; 2016 */ 
+    v_bfile bfile; 
+    v_file_len pls_integer; 
+    v_buf raw(2100); 
+    v_modulo pls_integer; 
+    v_pieces pls_integer;
+v_file_pos pls_integer := 1;
+    v_data raw(2100); 
+    v_chunks pls_integer; 
+    BEGIN 
+              v_bfile := bfilename('NORTHI_REPORT', p_file_name); 
+              v_file_len := dbms_lob.getlength(v_bfile); 
+              v_modulo := MOD(v_file_len, v_amt); 
+              v_pieces := TRUNC(v_file_len / v_amt); 
+              if (v_modulo <> 0) then 
+                    v_pieces := v_pieces + 1; 
+              end if; 
+              dbms_lob.fileopen(v_bfile, dbms_lob.file_readonly); 
+              dbms_lob.read(v_bfile, v_amt, v_file_pos, v_buf); 
+              v_data := null; 
+              for i in 1 .. v_pieces loop 
+                            v_file_pos := I * v_amt + 1; 
+                            v_file_len := v_file_len - v_amt; 
+                            v_data := utl_raw.concat(v_data, v_buf); 
+                            v_chunks := TRUNC(utl_raw.length(v_data) / k_max_line_width); 
+                            if (i <> v_pieces) then 
+                              v_chunks := v_chunks - 1; 
+                            end if; 
+                              utl_smtp.write_data(P_conn, utl_tcp.crlf); 
+                            v_data := null; 
+                            if (v_file_len < v_amt AND v_file_len > 0) then 
+                              v_amt := v_file_len; 
+                            end if; 
+                            dbms_lob.READ(v_bfile, v_amt, v_file_pos, v_buf); 
+              end loop; 
+    END;
+/
