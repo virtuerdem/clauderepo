@@ -223,6 +223,7 @@ CREATE OR REPLACE PROCEDURE BEGIN_LOADER_TRANSFER_TEST(
     l_total_duration    NUMBER;
     l_proc_name         VARCHAR2(100);
     l_row_count         NUMBER;
+    l_partition_id      NUMBER;
 
     -- Job tracking
     TYPE t_job_rec IS RECORD (
@@ -233,6 +234,10 @@ CREATE OR REPLACE PROCEDURE BEGIN_LOADER_TRANSFER_TEST(
     TYPE t_job_list IS TABLE OF t_job_rec INDEX BY PLS_INTEGER;
     l_jobs              t_job_list;
     l_job_count         NUMBER := 0;
+
+    -- DTYPE → PARTITION_VALUE mapping (tablodan okunacak)
+    TYPE t_dtype_map IS TABLE OF VARCHAR2(50) INDEX BY PLS_INTEGER;
+    l_dtype_map         t_dtype_map;
 
     PROCEDURE log_msg(p_msg VARCHAR2) IS
         PRAGMA AUTONOMOUS_TRANSACTION;
@@ -275,7 +280,7 @@ CREATE OR REPLACE PROCEDURE BEGIN_LOADER_TRANSFER_TEST(
 
         DBMS_SCHEDULER.ENABLE(l_job_name);
 
-        log_msg('  ├─ Job started: DTYPE=' || p_dtype);
+        log_msg('  ├─ Job started: DTYPE=' || p_dtype || ' (' || p_partition_value || ')');
     END;
 
     PROCEDURE wait_all_jobs IS
@@ -316,6 +321,31 @@ CREATE OR REPLACE PROCEDURE BEGIN_LOADER_TRANSFER_TEST(
         l_jobs.DELETE;
     END;
 
+    FUNCTION get_partition_value(p_dtype NUMBER) RETURN VARCHAR2 IS
+        l_value VARCHAR2(50);
+    BEGIN
+        -- Cache'den kontrol et
+        IF l_dtype_map.EXISTS(p_dtype) THEN
+            RETURN l_dtype_map(p_dtype);
+        END IF;
+
+        -- Tablodan oku
+        SELECT PARTITION_VALUE
+        INTO l_value
+        FROM NORTHI_PARTITION_TYPE
+        WHERE PARTITION_ID = l_partition_id
+          AND DTYPE = p_dtype;
+
+        -- Cache'e ekle
+        l_dtype_map(p_dtype) := l_value;
+
+        RETURN l_value;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            log_msg('⚠️  DTYPE=' || p_dtype || ' için PARTITION_VALUE bulunamadı!');
+            RETURN NULL;
+    END;
+
 BEGIN
     log_msg('========================================');
     log_msg('TEST LOADER BAŞLADI');
@@ -323,33 +353,48 @@ BEGIN
     log_msg('Date: ' || TO_CHAR(P_DATA_DATE, 'YYYY-MM-DD HH24:MI'));
     log_msg('========================================');
 
+    -- PARTITION_ID'yi bul
+    BEGIN
+        SELECT PARTITION_ID
+        INTO l_partition_id
+        FROM NORTHI_LOADER_SETTINGS
+        WHERE TABLE_NAME = P_TABLE_NAME
+          AND ROWNUM = 1;
+
+        log_msg('Partition ID: ' || l_partition_id);
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            log_msg('❌ HATA: ' || P_TABLE_NAME || ' için PARTITION_ID bulunamadı!');
+            RAISE;
+    END;
+
     -- GRUP 1: DTYPE 2,3,4
     log_msg('GROUP 1: DTYPE 2,3,4 (PARALLEL)');
-    start_test_job(2, 'ENODEB');
-    start_test_job(3, 'NW');
-    start_test_job(4, 'MAIN_REGION');
+    start_test_job(2, get_partition_value(2));
+    start_test_job(3, get_partition_value(3));
+    start_test_job(4, get_partition_value(4));
     wait_all_jobs;
 
     -- GRUP 2: DTYPE 7,8,9
     log_msg('GROUP 2: DTYPE 7,8,9 (PARALLEL)');
-    start_test_job(7, 'FBAND');
-    start_test_job(8, 'RBAND');
-    start_test_job(9, 'CBAND');
+    start_test_job(7, get_partition_value(7));
+    start_test_job(8, get_partition_value(8));
+    start_test_job(9, get_partition_value(9));
     wait_all_jobs;
 
     -- GRUP 3: DTYPE 10-14
     log_msg('GROUP 3: DTYPE 10,11,12,13,14 (PARALLEL)');
-    start_test_job(10, 'ILCE');
-    start_test_job(11, 'MAHALLE');
-    start_test_job(12, 'NFBAND');
-    start_test_job(13, 'SRCITY');
-    start_test_job(14, 'OEMANN');
+    start_test_job(10, get_partition_value(10));
+    start_test_job(11, get_partition_value(11));
+    start_test_job(12, get_partition_value(12));
+    start_test_job(13, get_partition_value(13));
+    start_test_job(14, get_partition_value(14));
     wait_all_jobs;
 
     -- GRUP 4: DTYPE 5,6
     log_msg('GROUP 4: DTYPE 5,6 (PARALLEL)');
-    start_test_job(5, 'SUB_REGION');
-    start_test_job(6, 'CITY');
+    start_test_job(5, get_partition_value(5));
+    start_test_job(6, get_partition_value(6));
     wait_all_jobs;
 
     l_total_duration := EXTRACT(SECOND FROM (SYSTIMESTAMP - l_start_time));
