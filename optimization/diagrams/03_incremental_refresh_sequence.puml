@@ -1,0 +1,242 @@
+@startuml ET_REPORT_IncrementalRefresh_Sequence
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam sequenceMessageAlign center
+
+skinparam participant {
+    BackgroundColor #D6EAF8
+    BorderColor #2980B9
+    FontColor #1A5276
+}
+
+skinparam actor {
+    BackgroundColor #D5F5E3
+    BorderColor #27AE60
+}
+
+skinparam database {
+    BackgroundColor #FEF9E7
+    BorderColor #F39C12
+    FontColor #784212
+}
+
+skinparam note {
+    BackgroundColor #F8F9FA
+    BorderColor #95A5A6
+}
+
+title **Incremental Refresh — Sequence Diyagramı**\nHer gün 04:00'da otomatik olarak çalışır
+
+actor "DBMS_SCHEDULER" as SCHED
+participant "PKG_REPORT_AGGREGATION\n.refresh_all()" as PKG
+participant ".refresh_materialized_views()" as P_MV
+participant ".refresh_availability_aggregations()" as P_AVAIL
+participant ".refresh_traffic_aggregations()" as P_TRAFFIC
+participant ".refresh_twamp_aggregations()" as P_TWAMP
+participant ".refresh_regional_summaries()" as P_REGIONAL
+participant ".refresh_rolling_20day()" as P_ROLLING
+participant ".collect_stats_after_load()" as P_STATS
+database "Source Tables\n(CELLSTS, OBJECTS...)" as SRC
+database "Materialized Views\n(MV_DAILY_CM_*)" as MVS
+database "Aggregation Tables\n(AGG_*)" as AGG
+database "AGG_REFRESH_LOG" as LOG
+
+== 04:00 — Scheduler Tetiklenir ==
+
+SCHED -> PKG : refresh_all(TRUNC(SYSDATE-1))
+activate PKG
+
+PKG -> LOG : log('START', session_id)
+
+== Adım 1: Materialized Views Refresh (~10 dk) ==
+
+PKG -> P_MV : refresh_materialized_views()
+activate P_MV
+
+P_MV -> LOG : log('START')
+
+P_MV -> MVS : DBMS_MVIEW.REFRESH\n('MV_DAILY_CM_4G', 'C')
+MVS -> SRC : OBJECTS_HW4G + LIST_ENODEB_CELL
+SRC --> MVS : pre-filtered 4G cells
+P_MV -> LOG : log('MV_CM4G SUCCESS')
+
+P_MV -> MVS : DBMS_MVIEW.REFRESH\n('MV_DAILY_CM_2G', 'C')
+MVS -> SRC : OBJECTS_HW2G + OMC_BSC
+SRC --> MVS : pre-filtered 2G cells
+P_MV -> LOG : log('MV_CM2G SUCCESS')
+
+P_MV -> MVS : DBMS_MVIEW.REFRESH\n('MV_DAILY_CM_3G', 'C')
+MVS -> SRC : OBJECTS_HW3G + LIST_RNC
+SRC --> MVS : pre-filtered 3G cells
+P_MV -> LOG : log('MV_CM3G SUCCESS')
+
+P_MV -> MVS : DBMS_MVIEW.REFRESH\n('MV_AVAILABILITY_ONAIR_4G', 'C')
+MVS -> SRC : AVAILABILITY_ONAIR_LIST
+SRC --> MVS : pre-joined avail data
+P_MV -> LOG : log('MV_AVAIL SUCCESS')
+
+P_MV --> PKG : MVs refreshed
+
+deactivate P_MV
+
+== Adım 2: Availability Aggregations (~10 dk) ==
+
+PKG -> P_AVAIL : refresh_availability_aggregations(date)
+activate P_AVAIL
+
+P_AVAIL -> LOG : log('START')
+
+P_AVAIL -> AGG : DELETE FROM AGG_CELL_AVAILABILITY_DAILY_4G\nWHERE AGGREGATION_DATE = :date
+note right : Idempotent — yeniden çalışabilir
+
+P_AVAIL -> SRC : MV_DAILY_CM_4G JOIN CELLSTS_4G_DA\nWHERE DTYPE=1 AND FRAGMENT_DATE=:date
+SRC --> P_AVAIL : raw availability data
+
+P_AVAIL -> AGG : INSERT /*+ APPEND PARALLEL(4) */\nINTO AGG_CELL_AVAILABILITY_DAILY_4G
+note right
+    AVAILABILITY_PCT hesaplanıyor:
+    100 - (PARTIAL_AVAIL + MANUAL_UNAVAIL)
+    / (60 * 60 * MAX_HOUR * REC_CNT) * 100
+end note
+
+P_AVAIL -> AGG : COMMIT
+P_AVAIL -> LOG : log('4G AVAIL SUCCESS', rows=N)
+
+P_AVAIL -> AGG : DELETE FROM AGG_CELL_AVAILABILITY_DAILY_2G\nWHERE AGGREGATION_DATE = :date
+P_AVAIL -> SRC : MV_DAILY_CM_2G JOIN CELLSTS_DA
+SRC --> P_AVAIL : 2G raw data
+P_AVAIL -> AGG : INSERT INTO AGG_CELL_AVAILABILITY_DAILY_2G
+P_AVAIL -> AGG : COMMIT
+P_AVAIL -> LOG : log('2G AVAIL SUCCESS', rows=N)
+
+P_AVAIL --> PKG : Availability aggregations done
+
+deactivate P_AVAIL
+
+== Adım 3: Traffic Aggregations (~8 dk) ==
+
+PKG -> P_TRAFFIC : refresh_traffic_aggregations(date)
+activate P_TRAFFIC
+
+P_TRAFFIC -> AGG : DELETE FROM AGG_TRAFFIC_DAILY_4G WHERE date=:date
+
+P_TRAFFIC -> SRC : MV_DAILY_CM_4G JOIN CELLSTS_4G_DA
+note right
+    Cell seviyesi:
+    SUM(DL_TRAFFIC_VOL + UL_TRAFFIC_VOL)
+    → MB ve GB dönüşümü
+end note
+SRC --> P_TRAFFIC : traffic data
+
+P_TRAFFIC -> AGG : INSERT (CELL level, AGGREGATION_LEVEL='CELL')
+P_TRAFFIC -> AGG : INSERT (eNodeB level, SELECT FROM CELL level)
+note right : eNodeB = SUM(CELL level data)
+
+P_TRAFFIC -> AGG : COMMIT
+P_TRAFFIC -> LOG : log('TRAFFIC SUCCESS', rows=N)
+P_TRAFFIC --> PKG : Traffic aggregations done
+
+deactivate P_TRAFFIC
+
+== Adım 4: TWAMP Aggregations (~5 dk) ==
+
+PKG -> P_TWAMP : refresh_twamp_aggregations(date)
+activate P_TWAMP
+
+P_TWAMP -> AGG : DELETE FROM AGG_TWAMP_JITTER_DAILY WHERE date=:date
+P_TWAMP -> SRC : TWAMP_PERF_H JOIN LIST_TWAMP_ENODEB
+SRC --> P_TWAMP : TWAMP raw data
+
+P_TWAMP -> AGG : INSERT INTO AGG_TWAMP_JITTER_DAILY
+note right
+    AVG/MAX/MIN(JITTER_AVERAGE)
+    AVG(DELAY_AVERAGE)
+    AVG(PACKET_LOSS)
+end note
+P_TWAMP -> AGG : COMMIT
+P_TWAMP -> LOG : log('TWAMP SUCCESS', rows=N)
+P_TWAMP --> PKG : TWAMP done
+
+deactivate P_TWAMP
+
+== Adım 5: Regional Summaries (~3 dk) ==
+
+PKG -> P_REGIONAL : refresh_regional_summaries(date)
+activate P_REGIONAL
+
+P_REGIONAL -> AGG : DELETE FROM AGG_REGIONAL_SUMMARY_DAILY WHERE date=:date
+
+P_REGIONAL -> AGG : SELECT FROM AGG_CELL_AVAILABILITY_DAILY_4G\nLEFT JOIN AGG_TRAFFIC_DAILY_4G
+note right
+    SUB_REGION bazlı GROUP BY
+    UNION ALL → NW (network-wide)
+end note
+AGG --> P_REGIONAL : aggregated data
+
+P_REGIONAL -> AGG : INSERT INTO AGG_REGIONAL_SUMMARY_DAILY
+P_REGIONAL -> AGG : COMMIT
+P_REGIONAL -> LOG : log('REGIONAL SUCCESS', rows=N)
+P_REGIONAL --> PKG : Regional summaries done
+
+deactivate P_REGIONAL
+
+== Adım 6: Rolling 20-Day (~4 dk) ==
+
+PKG -> P_ROLLING : refresh_rolling_20day(date)
+activate P_ROLLING
+
+P_ROLLING -> AGG : DELETE FROM AGG_AVAILABILITY_ROLLING_20DAY WHERE date=:date
+
+P_ROLLING -> AGG : SELECT FROM AGG_CELL_AVAILABILITY_DAILY_4G\nWHERE date BETWEEN :date-19 AND :date
+note right
+    CASE WHEN day_offset=0 → DAY_1_VALUE
+    ...
+    CASE WHEN day_offset=19 → DAY_20_VALUE
+    (Pre-pivot: 20 gün tek satırda)
+end note
+AGG --> P_ROLLING : 20-day window data
+
+P_ROLLING -> AGG : INSERT INTO AGG_AVAILABILITY_ROLLING_20DAY
+P_ROLLING -> AGG : COMMIT
+P_ROLLING -> LOG : log('ROLLING SUCCESS', rows=N)
+P_ROLLING --> PKG : 20-day rolling done
+
+deactivate P_ROLLING
+
+== Adım 7: Statistics Collection (~5 dk) ==
+
+PKG -> P_STATS : collect_stats_after_load()
+activate P_STATS
+
+P_STATS -> AGG : DBMS_STATS.GATHER_TABLE_STATS\n(granularity='PARTITION', degree=4)
+note right : 6 tablo için partition istatistikleri güncellenir
+
+P_STATS -> LOG : log('STATS SUCCESS')
+P_STATS --> PKG : Stats done
+
+deactivate P_STATS
+
+== Tamamlandı ==
+
+PKG -> LOG : log('COMPLETE', duration=~30min)
+PKG --> SCHED : Job completed successfully
+
+note over SCHED, LOG
+    Toplam refresh süresi: ~30-35 dakika
+    Sonraki çalışma: Ertesi gün 04:00
+    Hata durumunda: Email notification gönderilir
+end note
+
+== Rapor Sorguları (08:00 - 18:00) ==
+
+actor "Report User\n/ Scheduler" as USER
+participant "ET_REPORT_FIXEDQUERY" as REPORT
+
+USER -> REPORT : Execute query
+REPORT -> AGG : SELECT FROM AGG_* tables
+AGG --> REPORT : Pre-calculated data\n(saniyeler içinde)
+REPORT --> USER : Report result\n⚡ 2-8 saniye (eskiden 45-120 sn)
+
+@enduml

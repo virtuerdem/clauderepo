@@ -1,0 +1,268 @@
+@startuml ET_REPORT_FIXEDQUERY_ToBe
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+skinparam linetype ortho
+skinparam nodesep 40
+skinparam ranksep 55
+
+skinparam database {
+    BackgroundColor #D6EAF8
+    BorderColor #2980B9
+    FontColor #1A5276
+}
+
+skinparam rectangle {
+    BackgroundColor #FDFEFE
+    BorderColor #AAB7B8
+}
+
+skinparam component {
+    BackgroundColor #D5F5E3
+    BorderColor #1E8449
+    FontColor #145A32
+}
+
+skinparam collections {
+    BackgroundColor #F4ECF7
+    BorderColor #8E44AD
+    FontColor #4A235A
+}
+
+skinparam card {
+    BackgroundColor #FDEDEC
+    BorderColor #E74C3C
+    FontColor #78281F
+}
+
+skinparam storage {
+    BackgroundColor #FEF9E7
+    BorderColor #F39C12
+    FontColor #784212
+}
+
+skinparam actor {
+    BackgroundColor #EAF2FF
+    BorderColor #2E86C1
+}
+
+title **ET_REPORT_FIXEDQUERY — Optimizasyon Sonrası Akış Diyagramı (To-Be)**\n225 rapor query | Günlük refresh | 90-95% performans iyileşmesi
+
+' ============================================================
+' LAYER 0: RAW SOURCE TABLES
+' ============================================================
+package "Layer 0 — Source Tables (Raw)" #F2F3F4 {
+
+    package "NORTHI_PARSER" #EBF5FB {
+        database "OBJECTS_HW4G" as OBJ4G
+        database "OBJECTS_HW2G" as OBJ2G
+        database "OBJECTS_ULAK4G_DAILY" as OBJULAK
+    }
+
+    package "NORTHI_DATA — Dimension" #E9F7EF {
+        database "LIST_ENODEB_CELL" as LIST4G
+        database "LIST_RNC_NODEB_CELL" as LIST3G
+        database "OMC_BSC_BTS_CELL_LIST" as LIST2G
+        database "AVAILABILITY_ONAIR_LIST" as ONAIR
+        database "LIST_TWAMP_ENODEB" as LISTTWAMP
+    }
+
+    package "NORTHI_DATA — Fact" #FEF5E7 {
+        database "CELLSTS_4G_DA\n(Partitioned)" as CELLSTS4G
+        database "CELLSTS_DA\n(Partitioned)" as CELLSTS2G
+        database "CELL_STATISTICS_DA\n(Partitioned)" as CELLSTATS3G
+        database "ULAK_4G_DA" as ULAK4G
+        database "TWAMP_PERF_H / DA" as TWAMP
+        database "NED_2G / NED_3G" as NED
+        database "CELL_UTIL tables" as UTIL
+    }
+}
+
+' ============================================================
+' LAYER 1: MATERIALIZED VIEWS
+' ============================================================
+package "Layer 1 — Materialized Views\n(Günlük 04:00'da refresh — ~10 dk)" #E8F8F5 {
+
+    component "MV_DAILY_CM_4G\n─────────────────\n✔ Pre-filtered eNodeBs\n✔ SUBSTR hesabı yapıldı\n✔ OBJECTS_HW4G join edildi\n✔ 30 gün rolling window" as MV_CM4G #A9DFBF
+    component "MV_DAILY_CM_2G\n─────────────────\n✔ Pre-filtered BTSler\n✔ OBJECTS_HW2G join edildi" as MV_CM2G #A9DFBF
+    component "MV_DAILY_CM_3G\n─────────────────\n✔ Pre-filtered NodeBler\n✔ OBJECTS_HW3G join edildi" as MV_CM3G #A9DFBF
+    component "MV_AVAILABILITY_ONAIR_4G\n─────────────────\n✔ Availability pre-join\n✔ CM + ONAIR birleşik" as MV_AVAIL #A9DFBF
+}
+
+' ============================================================
+' LAYER 2: AGGREGATION TABLES
+' ============================================================
+package "Layer 2 — Aggregation Tables\n(Günlük 04:00'da refresh — ~15 dk)" #EBF5FB {
+
+    storage "AGG_CELL_AVAILABILITY\n_DAILY_4G / 2G\n─────────────\n✔ Günlük avail hesabı\n✔ Cell bazında özet\n✔ Partitioned by date\n✔ Compressed" as AGG_AVAIL #AED6F1
+    storage "AGG_TRAFFIC_DAILY_4G\n─────────────────────\n✔ Cell + eNodeB bazlı\n✔ MB/GB hesabı yapıldı\n✔ Zero traffic flagged\n✔ Partitioned by date" as AGG_TRAFFIC #AED6F1
+    storage "AGG_REGIONAL_SUMMARY\n_DAILY\n─────────────────────\n✔ 2G/3G/4G bölge özeti\n✔ NW toplamı dahil\n✔ UNION ALL kaldırıldı" as AGG_REGIONAL #AED6F1
+    storage "AGG_TWAMP_JITTER\n_DAILY\n─────────────────────\n✔ Günlük AVG/MAX jitter\n✔ Delay & packet loss\n✔ Partitioned by date" as AGG_TWAMP #AED6F1
+    storage "AGG_AVAILABILITY\n_ROLLING_20DAY\n─────────────────────\n✔ Pre-pivoted 20 gün\n✔ DAY_1..DAY_20 sütunlar\n✔ DECODE yok\n✔ Tek satır = tek eNodeB" as AGG_ROLLING #AED6F1
+}
+
+' ============================================================
+' LAYER 3: PKG_REPORT_AGGREGATION
+' ============================================================
+package "PKG_REPORT_AGGREGATION\n(PL/SQL Package)" #FEF9E7 {
+    component "refresh_materialized_views()" as PROC_MV #F9E79F
+    component "refresh_availability_aggregations()" as PROC_AVAIL #F9E79F
+    component "refresh_traffic_aggregations()" as PROC_TRAFFIC #F9E79F
+    component "refresh_regional_summaries()" as PROC_REGIONAL #F9E79F
+    component "refresh_twamp_aggregations()" as PROC_TWAMP #F9E79F
+    component "refresh_rolling_20day()" as PROC_ROLLING #F9E79F
+    component "collect_stats_after_load()" as PROC_STATS #F9E79F
+}
+
+' ============================================================
+' SCHEDULER
+' ============================================================
+actor "DBMS_SCHEDULER\nJOB_DAILY_AGGREGATION_REFRESH\n(Her gün 04:00)" as SCHED #D6EAF8
+
+' ============================================================
+' REPORT QUERIES
+' ============================================================
+package "ET_REPORT_FIXEDQUERY — Optimized\n225 rapor query" #F4ECF7 {
+    collections "100.x — 101.x\n4G Availability\n(24 query)\n⬇ 95% daha hızlı" as R_100
+    collections "119.x\nTWAMP Performance\n(14 query)\n⬇ 90% daha hızlı" as R_119
+    collections "120.x\n4G VQI / Traffic\n(9 query)\n⬇ 88% daha hızlı" as R_120
+    collections "121.x\n3G Statistics\n(10 query)\n⬇ 85% daha hızlı" as R_121
+    collections "122.x\n2G + TWAMP Mixed\n(24 query)\n⬇ 90% daha hızlı" as R_122
+    collections "123.x\n2G / NED Reports\n(30 query)\n⬇ 85% daha hızlı" as R_123
+}
+
+' ============================================================
+' OUTPUT
+' ============================================================
+card "Report Output\n(Dashboard / API / Kullanıcı)" as OUTPUT #D5F5E3
+card "AGG_REFRESH_LOG\n(Monitoring & Audit)" as LOG #FADBD8
+
+' ============================================================
+' LAYER 0 → LAYER 1 (MV Refresh)
+' ============================================================
+
+OBJ4G --> PROC_MV : daily load
+OBJ2G --> PROC_MV
+LIST4G --> PROC_MV
+LIST3G --> PROC_MV
+LIST2G --> PROC_MV
+
+PROC_MV --> MV_CM4G : REFRESH FAST
+PROC_MV --> MV_CM2G : REFRESH FAST
+PROC_MV --> MV_CM3G : REFRESH FAST
+PROC_MV --> MV_AVAIL : REFRESH FAST
+
+' ============================================================
+' LAYER 0 + LAYER 1 → LAYER 2 (Aggregation Build)
+' ============================================================
+
+MV_CM4G --> PROC_AVAIL : filtered cells
+MV_CM2G --> PROC_AVAIL : filtered cells
+CELLSTS4G --> PROC_AVAIL : partition scan
+CELLSTS2G --> PROC_AVAIL : partition scan
+ONAIR --> PROC_AVAIL : filter
+PROC_AVAIL --> AGG_AVAIL : INSERT /*+APPEND*/
+
+MV_CM4G --> PROC_TRAFFIC : cell list
+CELLSTS4G --> PROC_TRAFFIC : partition scan
+PROC_TRAFFIC --> AGG_TRAFFIC : INSERT /*+APPEND*/
+
+AGG_AVAIL --> PROC_REGIONAL : pre-agg data
+AGG_TRAFFIC --> PROC_REGIONAL : pre-agg data
+PROC_REGIONAL --> AGG_REGIONAL : INSERT /*+APPEND*/
+
+TWAMP --> PROC_TWAMP : partition scan
+LISTTWAMP --> PROC_TWAMP : JOIN
+PROC_TWAMP --> AGG_TWAMP : INSERT /*+APPEND*/
+
+AGG_AVAIL --> PROC_ROLLING : 20-day window
+PROC_ROLLING --> AGG_ROLLING : INSERT /*+APPEND*/
+
+' ============================================================
+' STATS
+' ============================================================
+
+AGG_AVAIL --> PROC_STATS
+AGG_TRAFFIC --> PROC_STATS
+AGG_REGIONAL --> PROC_STATS
+AGG_TWAMP --> PROC_STATS
+AGG_ROLLING --> PROC_STATS
+
+' ============================================================
+' SCHEDULER → PACKAGE
+' ============================================================
+
+SCHED --> PROC_MV : 1. Step
+PROC_MV --> PROC_AVAIL : 2. Step
+PROC_AVAIL --> PROC_TRAFFIC : 3. Step
+PROC_TRAFFIC --> PROC_TWAMP : 4. Step
+PROC_TWAMP --> PROC_REGIONAL : 5. Step
+PROC_REGIONAL --> PROC_ROLLING : 6. Step
+PROC_ROLLING --> PROC_STATS : 7. Step
+PROC_STATS --> LOG : log result
+
+' ============================================================
+' LAYER 2 → REPORT QUERIES
+' ============================================================
+
+AGG_AVAIL --> R_100 : availability\ndata
+AGG_TRAFFIC --> R_100 : traffic\ndata
+AGG_ROLLING --> R_100 : 20-day\npivot
+AGG_REGIONAL --> R_100 : region\nsummary
+
+AGG_TWAMP --> R_119 : jitter/delay
+AGG_AVAIL --> R_119 : avail check
+
+AGG_TRAFFIC --> R_120 : zero\ntraffic
+AGG_ROLLING --> R_120 : VQI\npivot
+AGG_AVAIL --> R_120 : avail
+
+MV_CM3G --> R_121 : 3G cells
+CELLSTATS3G --> R_121 : 3G perf
+NED --> R_121 : NED data
+
+AGG_AVAIL --> R_122 : 2G avail
+AGG_TWAMP --> R_122 : TWAMP
+MV_CM2G --> R_122 : 2G cells
+
+AGG_AVAIL --> R_123 : 2G avail
+NED --> R_123 : NED data
+MV_CM2G --> R_123 : 2G cells
+
+' ============================================================
+' OUTPUT
+' ============================================================
+
+R_100 --> OUTPUT
+R_119 --> OUTPUT
+R_120 --> OUTPUT
+R_121 --> OUTPUT
+R_122 --> OUTPUT
+R_123 --> OUTPUT
+
+' ============================================================
+' PERFORMANCE NOTES
+' ============================================================
+
+note right of AGG_ROLLING
+  🚀 Pre-pivoted data
+  20 DECODE → 1 SELECT
+end note
+
+note right of AGG_REGIONAL
+  🚀 UNION ALL ortadan kalktı
+  GROUP BY ROLLUP kullanılıyor
+end note
+
+note right of MV_CM4G
+  🚀 SUBSTR+REVERSE hesabı
+  1 kez yapılıyor (39 → 1)
+end note
+
+note right of AGG_AVAIL
+  🚀 Availability formülü
+  1 kez hesaplanıyor (80 → 1)
+end note
+
+@enduml

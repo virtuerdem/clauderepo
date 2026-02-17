@@ -1,0 +1,111 @@
+@startuml ET_REPORT_QueryExecution_Comparison
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+
+skinparam activity {
+    BackgroundColor #FDFEFE
+    BorderColor #AAB7B8
+}
+
+skinparam ActivityDiamond {
+    BackgroundColor #F9E79F
+    BorderColor #D4AC0D
+}
+
+title **Tek Rapor Query — Yürütme Karşılaştırması**\nÖnce vs. Sonra
+
+|#FDEDEC| <color:#C0392B>**ÖNCE (As-Is)**</color>\n~45-120 saniye |
+|#D5F5E3| <color:#1E8449>**SONRA (To-Be)**</color>\n~2-8 saniye |
+
+|<color:#C0392B>**ÖNCE (As-Is)**</color>|
+start
+: Query tetiklendi;
+
+: **CTE: CM_4G hesaplanıyor**
+OBJECTS_HW4G full scan
+LIST_ENODEB_CELL JOIN
+SUBSTR + REVERSE + INSTR
+her satır için hesaplanıyor;
+
+note right
+    ⚠️ Bu CTE aynı gün
+    39+ farklı query tarafından
+    ayrı ayrı hesaplanıyor
+end note
+
+: **CTE: DS_OBJ_DATA**
+OMC_BSC_BTS_CELL_LIST JOIN
+OBJECTS_HW2G scan
+String filtering;
+
+: **CTE: DS_DATA (Availability)**
+CELLSTS_4G_DA partition scan
+AVAILABILITY_ONAIR_LIST JOIN
+GROUP BY NETWORK_ID, FRAGMENT_DATE;
+
+note right
+    ⚠️ Bu hesaplama aynı gün
+    80+ farklı query tarafından
+    tekrarlanıyor
+end note
+
+: **CTE: DS_2 (20-day Pivot)**
+TRUNC(SYSDATE-1)...TRUNC(SYSDATE-20)
+20 adet DECODE ifadesi
+20 farklı tarih hesabı;
+
+note right
+    ⚠️ Her query için
+    20 DECODE → 20 tarih hesabı
+end note
+
+: **Final SELECT**
+DS_2 JOIN DS_AVAILABILITY
+WHERE + ORDER BY;
+
+: **Sonuç Döndürüldü**
+45 - 120 saniye;
+
+stop
+
+|<color:#1E8449>**SONRA (To-Be)**</color>|
+start
+: Query tetiklendi;
+
+: **04:00'da tamamlanan**
+MV ve AGG verisi hazır;
+
+: **AGG_AVAILABILITY_ROLLING_20DAY**
+WHERE BASE_DATE = TRUNC(SYSDATE-1)
+→ Tek tablo scan
+→ 20 gün zaten pivot edilmiş;
+
+note left
+    ✔ DECODE yok
+    ✔ Tarih hesabı yok
+    ✔ JOIN azaltıldı
+end note
+
+if (Regional summary\nmi gerekiyor?) then (Evet)
+    : **AGG_REGIONAL_SUMMARY_DAILY**
+    SELECT doğrudan
+    (avail + traffic özeti hazır);
+else (Hayır)
+    : **AGG_CELL_AVAILABILITY_DAILY_4G**
+    WHERE AGGREGATION_DATE = :date
+    AND SUB_REGION_ID = :region;
+endif
+
+: **Final SELECT**
+Tek JOIN veya\ntekil tablo sorgusu;
+
+: **Sonuç Döndürüldü**
+2 - 8 saniye;
+
+stop
+
+|<color:#1E8449>**SONRA (To-Be)**</color>|
+
+@enduml

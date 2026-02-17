@@ -1,0 +1,202 @@
+@startuml ET_REPORT_FIXEDQUERY_AsIs
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+skinparam linetype ortho
+skinparam nodesep 40
+skinparam ranksep 60
+
+skinparam database {
+    BackgroundColor #D6EAF8
+    BorderColor #2980B9
+    FontColor #1A5276
+}
+
+skinparam rectangle {
+    BackgroundColor #FDFEFE
+    BorderColor #AAB7B8
+}
+
+skinparam component {
+    BackgroundColor #FEF9E7
+    BorderColor #F39C12
+    FontColor #784212
+}
+
+skinparam collections {
+    BackgroundColor #EAFAF1
+    BorderColor #27AE60
+    FontColor #145A32
+}
+
+skinparam card {
+    BackgroundColor #FDEDEC
+    BorderColor #E74C3C
+    FontColor #78281F
+}
+
+skinparam note {
+    BackgroundColor #F8F9FA
+    BorderColor #95A5A6
+}
+
+title **ET_REPORT_FIXEDQUERY — Mevcut Durum Akış Diyagramı (As-Is)**\n225 rapor query | Günlük & Saatlik çalışma
+
+' ============================================================
+' SOURCE TABLES - PARSER
+' ============================================================
+package "NORTHI_PARSER\n(Configuration Source)" #EBF5FB {
+    database "OBJECTS_HW4G\n(39x)" as OBJ4G
+    database "OBJECTS_HW2G\n(30x)" as OBJ2G
+    database "OBJECTS_ULAK4G_DAILY\n(20x)" as OBJULAK
+}
+
+' ============================================================
+' DIMENSION TABLES
+' ============================================================
+package "NORTHI_DATA — Dimension Tables\n(Her query'de JOIN ediliyor)" #E9F7EF {
+    database "LIST_ENODEB_CELL\n(72x)" as LIST4G
+    database "LIST_RNC_NODEB_CELL\n(49x)" as LIST3G
+    database "OMC_BSC_BTS_CELL_LIST\n(35x)" as LIST2G
+    database "LIST_ULAK_ENODEB_CELL\n(38x)" as LISTULAK
+    database "AVAILABILITY_ONAIR_LIST\n(79x)" as ONAIR
+    database "LIST_TWAMP_ENODEB\n(7x)" as LISTTWAMP
+}
+
+' ============================================================
+' FACT / PERFORMANCE TABLES
+' ============================================================
+package "NORTHI_DATA — Fact Tables\n(Büyük partitioned tablolar)" #FEF5E7 {
+    database "CELLSTS_4G_DA\n4G Performans\n(70x)" as CELLSTS4G
+    database "CELLSTS_DA\n2G Performans\n(40x)" as CELLSTS2G
+    database "CELL_STATISTICS_DA\n3G Performans\n(49x)" as CELLSTATS3G
+    database "ULAK_4G_DA\n(40x)" as ULAK4G
+    database "TWAMP_PERF_H / DA\n(12x)" as TWAMP
+    database "NED_2G_REPORT\n(14x)" as NED2G
+    database "NED_3G_REPORT\n(14x)" as NED3G
+    database "DESIGN_NORTHI_MW\n(6x)" as MW
+    database "CELL_UTIL tables\n(21x)" as UTIL
+}
+
+' ============================================================
+' CTE PATTERNS (Her query'de tekrar hesaplanıyor)
+' ============================================================
+package "Tekrar Eden CTE Blokları\n(Her çalışmada yeniden hesaplanıyor)" #FDEDEC {
+    component "CM_4G / DS_OBJ_DATA\nSUBSTR+REVERSE\nfiltering" as CTE_CM4G
+    component "CM_2G / DS_OBJ_DATA\nSUBSTR+REVERSE\nfiltering" as CTE_CM2G
+    component "CM_3G / DS_OBJ_DATA\nSUBSTR+REVERSE\nfiltering" as CTE_CM3G
+    component "DS_DATA / DS_AVAIL\nAvailability\nCalculation" as CTE_AVAIL
+    component "DATASET_1 / DS_2\n20-day DECODE\nPivot" as CTE_PIVOT
+}
+
+' ============================================================
+' REPORT QUERY GROUPS
+' ============================================================
+package "ET_REPORT_FIXEDQUERY\n225 Rapor Query" #F4ECF7 {
+    collections "100.x — 101.x\n4G Availability\n(24 query)" as R_100
+    collections "119.x\nTWAMP Performance\n(14 query)" as R_119
+    collections "120.x\n4G VQI / Traffic\n(9 query)" as R_120
+    collections "121.x\n3G Statistics\n(10 query)" as R_121
+    collections "122.x\n2G + TWAMP Mixed\n(24 query)" as R_122
+    collections "123.x\n2G / NED Reports\n(30 query)" as R_123
+}
+
+' ============================================================
+' EXECUTION TRIGGER
+' ============================================================
+card "Scheduler\n(Günlük / Saatlik)" as SCHED #E8DAEF
+
+' ============================================================
+' REPORT OUTPUT
+' ============================================================
+card "Report Output\n(Dashboard / Kullanıcı)" as OUTPUT #D5F5E3
+
+' ============================================================
+' CONNECTIONS - Source to CTE
+' ============================================================
+
+OBJ4G --> CTE_CM4G : full scan\nher query için
+OBJ2G --> CTE_CM2G : full scan\nher query için
+LIST4G --> CTE_CM4G : JOIN
+LIST3G --> CTE_CM3G : JOIN
+LIST2G --> CTE_CM2G : JOIN
+LISTULAK --> CTE_CM4G : JOIN
+
+CELLSTS4G --> CTE_AVAIL : GROUP BY
+CELLSTS2G --> CTE_AVAIL : GROUP BY
+ONAIR --> CTE_AVAIL : JOIN
+CELLSTS4G --> CTE_PIVOT : 20-day DECODE\npivot
+CELL_STATISTICS_DA --> CTE_PIVOT : 20-day pivot
+
+' ============================================================
+' CONNECTIONS - CTE to Queries
+' ============================================================
+
+CTE_CM4G --> R_100
+CTE_CM4G --> R_120
+CTE_CM4G --> R_122
+CTE_CM2G --> R_122
+CTE_CM2G --> R_123
+CTE_CM3G --> R_121
+CTE_AVAIL --> R_100
+CTE_AVAIL --> R_101
+CTE_AVAIL --> R_121
+CTE_AVAIL --> R_122
+CTE_PIVOT --> R_100
+CTE_PIVOT --> R_120
+CTE_PIVOT --> R_121
+
+TWAMP --> R_119
+LISTTWAMP --> R_119
+NED2G --> R_123
+NED3G --> R_121
+MW --> R_122
+ULAK4G --> R_120
+UTIL --> R_120
+
+' ============================================================
+' TRIGGER & OUTPUT
+' ============================================================
+
+SCHED --> R_100
+SCHED --> R_119
+SCHED --> R_120
+SCHED --> R_121
+SCHED --> R_122
+SCHED --> R_123
+
+R_100 --> OUTPUT
+R_119 --> OUTPUT
+R_120 --> OUTPUT
+R_121 --> OUTPUT
+R_122 --> OUTPUT
+R_123 --> OUTPUT
+
+' ============================================================
+' PROBLEM NOTES
+' ============================================================
+
+note bottom of CTE_CM4G
+  ⚠️ SUBSTR+REVERSE+INSTR her query'de
+  tekrar hesaplanıyor (~39 kez)
+end note
+
+note bottom of CTE_AVAIL
+  ⚠️ Availability formülü her
+  query'de sıfırdan hesaplanıyor
+  (~80 kez)
+end note
+
+note bottom of CTE_PIVOT
+  ⚠️ 20 adet DECODE ifadesi
+  her query için tekrar çalışıyor
+end note
+
+note right of CELLSTS4G
+  ⚠️ En çok okunan tablo
+  70+ query'de full/partition scan
+  Yüksek I/O yükü
+end note
+
+@enduml
